@@ -1983,7 +1983,7 @@ class LSK(nn.Module):
         self.conv0 = nn.Conv2d(dim, dim, 5, padding=2, groups=dim)
         # For dilation=3, k=7, padding must be 9 to keep size: (7-1)*3 // 2 = 9
        # self.conv_spatial = nn.Conv2d(dim, dim, 7, stride=1, padding=3, groups=dim, dilation=1)
-        self.conv_spatial = nn.Conv2d(dim, dim, 7, stride=1, padding=6, groups=dim, dilation=2)
+        self.conv_spatial = nn.Conv2d(dim, dim, 7, stride=1, padding=9, groups=dim, dilation=3)
 
         
         dim_half = max(1, dim // 2)
