@@ -67,9 +67,8 @@ from ultralytics.nn.modules import (
     WorldDetect,
     YOLOEDetect,
     YOLOESegment,
-    C3k2_LSK,
-    BottleneckLSK,
     LSK,
+    C3k2_LSK,
     v10Detect,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, YAML, colorstr, emojis
