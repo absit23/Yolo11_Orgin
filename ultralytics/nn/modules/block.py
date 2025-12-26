@@ -52,7 +52,6 @@ __all__ = (
     "PSA",
     "SCDown",
     "LSK",
-    "BottleneckLSK",
     "C3k2_LSK",
     "TorchVision",
 )
