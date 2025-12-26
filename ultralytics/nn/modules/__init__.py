@@ -59,7 +59,6 @@ from .block import (
     ResNetLayer,
     SCDown,
     LSK,
-    BottleneckLSK,
     C3k2_LSK,
     TorchVision,
 )
@@ -183,6 +182,5 @@ __all__ = (
     "Index",
     "A2C2f",
     "LSK",
-    "BottleneckLSK",
     "C3k2_LSK",
 )
