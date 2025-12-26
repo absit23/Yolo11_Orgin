@@ -29,20 +29,20 @@ head:
   # Top-down pathway
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]      # 11
   - [[-1, 6], 1, Concat, [1]]                       # 12 - P4 fusion
-  - [-1, 2, C3k2_LSK, [512, False]]                 # 13 - ⭐ MAIN LSK (30×40 resolution)
-
+  - [-1, 2, C3k2_LSK, [512, False, 1]]   #  fine crack layer 13, dilation=1
+  
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]      # 14
   - [[-1, 4], 1, Concat, [1]]                       # 15 - P3 fusion
-  - [-1, 2, C3k2_LSK, [256, False]]                 # 16 - 🔥 SECONDARY LSK (60×80 resolution)
+  - [-1, 2, C3k2_LSK, [256, False, 1]]   # layer 16, dilation=1
 
   # Bottom-up pathway
   - [-1, 1, Conv, [256, 3, 2]]                      # 17
   - [[-1, 13], 1, Concat, [1]]                      # 18 - P4 concat
-  - [-1, 2, C3k2, [512, False]]                     # 19
+  - [-1, 2, C3k2_LSK, [512, False, 1]]     #meduim crack                # 19
 
   - [-1, 1, Conv, [512, 3, 2]]                      # 20
   - [[-1, 10], 1, Concat, [1]]                      # 21 - P5 concat
-  - [-1, 2, C3k2, [1024, True]]                     # 22
+  - [-1, 2, C3k2_LSK, [1024, True, 3]]   #   Large crack layer 22, dilation=3                 
 
   - [[16, 19, 22], 1, Segment, [nc, 32, 256]]       # 23 - Segmentation head
 
