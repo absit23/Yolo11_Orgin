@@ -1976,60 +1976,71 @@ class Residual(nn.Module):
 #new guest here);
 
 class LSK(nn.Module):
-    def __init__(self, dim):
+    def __init__(self, dim, dilation=1):
         super().__init__()
         dim = int(dim)
-        # Ensure spatial preservation: p = (k - 1) // 2
-        self.conv0 = nn.Conv2d(dim, dim, 5, padding=2, groups=dim)
-        # For dilation=3, k=7, padding must be 9 to keep size: (7-1)*3 // 2 = 9
-       # self.conv_spatial = nn.Conv2d(dim, dim, 7, stride=1, padding=3, groups=dim, dilation=1)
-        self.conv_spatial = nn.Conv2d(dim, dim, 7, stride=1, padding=9, groups=dim, dilation=3)
 
-        
+        # Local context
+        self.dw5 = nn.Conv2d(dim, dim, 5, padding=2, groups=dim)
+
+        # Large kernel spatial context (SEQUENTIAL, not parallel)
+        if dilation == 1:
+            self.dw7 = nn.Conv2d(dim, dim, 7, padding=3, groups=dim, dilation=1)
+        else:
+            # dilation = 3 → effective RF ≈ 23
+            self.dw7 = nn.Conv2d(dim, dim, 7, padding=9, groups=dim, dilation=3)
+
         dim_half = max(1, dim // 2)
-        self.conv1 = nn.Conv2d(dim, dim_half, 1)
-        self.conv2 = nn.Conv2d(dim, dim_half, 1)
+
+        self.pw1 = nn.Conv2d(dim, dim_half, 1)
+        self.pw2 = nn.Conv2d(dim, dim_half, 1)
+
         self.conv_squeeze = nn.Conv2d(2, 2, 7, padding=3)
-        self.conv = nn.Conv2d(dim_half, dim, 1)
+        self.conv_out = nn.Conv2d(dim_half, dim, 1)
 
     def forward(self, x):
-        attn1_base = self.conv0(x)
-        attn2_base = self.conv_spatial(attn1_base)
-        attn1 = self.conv1(attn1_base)
-        attn2 = self.conv2(attn2_base)
-        attn_cat = torch.cat([attn1, attn2], dim=1)
-        avg_attn = torch.mean(attn_cat, dim=1, keepdim=True)
-        max_attn, _ = torch.max(attn_cat, dim=1, keepdim=True)
-        agg = torch.cat([avg_attn, max_attn], dim=1)
-        sig = self.conv_squeeze(agg).sigmoid()
-        attn = attn1 * sig[:, 0:1] + attn2 * sig[:, 1:2]
-        return x * self.conv(attn)
+        u1 = self.dw5(x)
+        u2 = self.dw7(u1)   # ✅ sequential (paper-correct)
 
-class BottleneckLSK(nn.Module):
-    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
-        super().__init__()
-        c_ = max(1, int(c2 * e))
-        self.cv1 = Conv(c1, c_, k[0], 1)
-        self.cv2 = Conv(c_, c2, k[1], 1, g=g)
-        self.lsk = LSK(c2)
-        self.add = shortcut and c1 == c2
+        a1 = self.pw1(u1)
+        a2 = self.pw2(u2)
 
-    def forward(self, x):
-        return x + self.lsk(self.cv2(self.cv1(x))) if self.add else self.lsk(self.cv2(self.cv1(x)))
+        attn = torch.cat([a1, a2], dim=1)
+
+        avg = torch.mean(attn, dim=1, keepdim=True)
+        mx, _ = torch.max(attn, dim=1, keepdim=True)
+
+        sig = self.conv_squeeze(torch.cat([avg, mx], dim=1)).sigmoid()
+
+        fused = a1 * sig[:, 0:1] + a2 * sig[:, 1:2]
+
+        return x * self.conv_out(fused)
+
 
 class C3k2_LSK(nn.Module):
-    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
+    def __init__(self, c1, c2, n=1, e=0.5, dilation=1):
         super().__init__()
-        # Standard hidden channel calculation
-        self.c = max(1, int(c2 * e)) 
-        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
+        self.c = max(1, int(c2 * e))
+
+        self.cv1 = Conv(c1, 2 * self.c, 1)
         self.cv2 = Conv((2 + n) * self.c, c2, 1)
-        self.m = nn.ModuleList(BottleneckLSK(self.c, self.c, shortcut, g, k=(3, 3), e=1.0) for _ in range(n))
+
+        self.m = nn.ModuleList(
+            Bottleneck(self.c, self.c, shortcut=True, e=1.0)
+            for _ in range(n)
+        )
+
+        self.lsk = LSK(c2, dilation=dilation)
+        self.add = c1 == c2
 
     def forward(self, x):
         y = list(self.cv1(x).chunk(2, 1))
         y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
+
+        out = self.cv2(torch.cat(y, 1))
+        out = self.lsk(out)
+
+        return out + x if self.add else out
         #00
 
 
