@@ -58,6 +58,8 @@ from .block import (
     RepVGGDW,
     ResNetLayer,
     SCDown,
+    C3k2_Ghost,    # <--- ADD THIS
+    C3k_Ghost,
     LSK,
     C3k2_LSK,
     TorchVision,
@@ -181,6 +183,8 @@ __all__ = (
     "TorchVision",
     "Index",
     "A2C2f",
+    "C3k2_Ghost",  # <--- ADD THIS
+    "C3k_Ghost",
     "LSK",
     "C3k2_LSK",
 )
