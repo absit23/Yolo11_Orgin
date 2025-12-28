@@ -67,6 +67,8 @@ from ultralytics.nn.modules import (
     WorldDetect,
     YOLOEDetect,
     YOLOESegment,
+    C3k2_Ghost,
+    C3k_Ghost,
     LSK,
     C3k2_LSK,
     v10Detect,
@@ -1613,6 +1615,8 @@ def parse_model(d, ch, verbose=True):
             SCDown,
             C2fCIB,
             A2C2f,
+            C3k2_Ghost,
+            C3k_Ghost,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1632,6 +1636,7 @@ def parse_model(d, ch, verbose=True):
             C2fPSA,
             C2fCIB,
             C2PSA,
+            C3k2_Ghost,
             A2C2f,
         }
     )
