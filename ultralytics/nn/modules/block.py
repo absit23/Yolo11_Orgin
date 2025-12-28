@@ -51,6 +51,8 @@ __all__ = (
     "Attention",
     "PSA",
     "SCDown",
+    "C3k2_Ghost",
+    "C3k_Ghost",
     "LSK",
     "C3k2_LSK",
     "TorchVision",
@@ -1971,7 +1973,61 @@ class Residual(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply residual connection to input features."""
         return x + self.m(x)
-        
+#another new guest here :{
+
+class C3k2_Ghost(C2f):
+    """
+    C3k2_Ghost is a lightweight version of YOLOv11's C3k2.
+    It replaces standard Bottleneck blocks with GhostBottleneck blocks to 
+    reduce parameters and computational load, as seen in YOLO-Air and YOLO11-ATL papers.
+    """
+
+    def __init__(self, c1: int, c2: int, n: int = 1, c3k: bool = False, e: float = 0.5, g: int = 1, shortcut: bool = True):
+        """
+        Initialize C3k2_Ghost module.
+
+        Args:
+            c1 (int): Input channels.
+            c2 (int): Output channels.
+            n (int): Number of blocks.
+            c3k (bool): Whether to use C3k-style logic (customizable kernels).
+            e (float): Expansion ratio.
+            g (int): Groups for convolutions.
+            shortcut (bool): Whether to use shortcut connections.
+        """
+        super().__init__(c1, c2, n, shortcut, g, e)
+        # We replace the internal 'self.m' ModuleList with GhostBottlenecks
+        # c is inherited from C2f (self.c = int(c2 * e))
+        self.m = nn.ModuleList(
+            C3k_Ghost(self.c, self.c, 2, shortcut, g) if c3k else GhostBottleneck(self.c, self.c) 
+            for _ in range(n)
+        )
+
+class C3k_Ghost(C3):
+    """
+    C3k_Ghost is a CSP bottleneck module using GhostBottleneck blocks.
+    It provides a more efficient alternative for feature extraction.
+    """
+
+    def __init__(self, c1: int, c2: int, n: int = 1, shortcut: bool = True, g: int = 1, e: float = 0.5, k: int = 3):
+        """
+        Initialize C3k_Ghost module.
+
+        Args:
+            c1 (int): Input channels.
+            c2 (int): Output channels.
+            n (int): Number of GhostBottleneck blocks.
+            shortcut (bool): Whether to use shortcut connections.
+            g (int): Groups for convolutions.
+            e (float): Expansion ratio.
+            k (int): Kernel size.
+        """
+        super().__init__(c1, c2, n, shortcut, g, e)
+        c_ = int(c2 * e)  # hidden channels
+        # Using the GhostBottleneck instead of standard Bottleneck
+        self.m = nn.Sequential(*(GhostBottleneck(c_, c_, k=k) for _ in range(n)))
+
+
 #new guest here);
 
 class LSK(nn.Module):
