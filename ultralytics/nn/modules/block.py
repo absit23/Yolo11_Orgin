@@ -2031,72 +2031,74 @@ class C3k_Ghost(C3):
 #new guest here);
 
 class LSK(nn.Module):
-    def __init__(self, dim, dilation=1):
-        super().__init__()
-        dim = int(dim)
+    def __init__(self, dim, dilation=1):
+        super().__init__()
+        dim = int(dim)
 
-        # Local context
-        self.dw5 = nn.Conv2d(dim, dim, 5, padding=2, groups=dim)
+        # Local context
+        self.dw5 = nn.Conv2d(dim, dim, 5, padding=2, groups=dim)
 
-        # Large kernel spatial context (SEQUENTIAL, not parallel)
-        if dilation == 1:
-            self.dw7 = nn.Conv2d(dim, dim, 7, padding=3, groups=dim, dilation=1)
-        else:
-            # dilation = 3 → effective RF ≈ 23
-            self.dw7 = nn.Conv2d(dim, dim, 7, padding=9, groups=dim, dilation=3)
+        # Large kernel spatial context (Dilation 1 or 3)
+        if dilation == 1:
+            self.dw7 = nn.Conv2d(dim, dim, 7, padding=3, groups=dim, dilation=1)
+        else:
+            # Default to dilation 3 (Receptive Field ~23)
+            self.dw7 = nn.Conv2d(dim, dim, 7, padding=9, groups=dim, dilation=3)
 
-        dim_half = max(1, dim // 2)
+        dim_half = max(1, dim // 2)
 
-        self.pw1 = nn.Conv2d(dim, dim_half, 1)
-        self.pw2 = nn.Conv2d(dim, dim_half, 1)
+        self.pw1 = nn.Conv2d(dim, dim_half, 1)
+        self.pw2 = nn.Conv2d(dim, dim_half, 1)
 
-        self.conv_squeeze = nn.Conv2d(2, 2, 7, padding=3)
-        self.conv_out = nn.Conv2d(dim_half, dim, 1)
+        self.conv_squeeze = nn.Conv2d(2, 2, 7, padding=3)
+        self.conv_out = nn.Conv2d(dim_half, dim, 1)
 
-    def forward(self, x):
-        u1 = self.dw5(x)
-        u2 = self.dw7(u1)   # ✅ sequential (paper-correct)
+    def forward(self, x):
+        u1 = self.dw5(x)
+        u2 = self.dw7(u1)  # Sequential context
 
-        a1 = self.pw1(u1)
-        a2 = self.pw2(u2)
+        a1 = self.pw1(u1)
+        a2 = self.pw2(u2)
 
-        attn = torch.cat([a1, a2], dim=1)
+        attn = torch.cat([a1, a2], dim=1)
 
-        avg = torch.mean(attn, dim=1, keepdim=True)
-        mx, _ = torch.max(attn, dim=1, keepdim=True)
+        avg = torch.mean(attn, dim=1, keepdim=True)
+        mx, _ = torch.max(attn, dim=1, keepdim=True)
 
-        sig = self.conv_squeeze(torch.cat([avg, mx], dim=1)).sigmoid()
+        # Spatial attention
+        sig = self.conv_squeeze(torch.cat([avg, mx], dim=1)).sigmoid()
 
-        fused = a1 * sig[:, 0:1] + a2 * sig[:, 1:2]
+        fused = a1 * sig[:, 0:1] + a2 * sig[:, 1:2]
 
-        return x * self.conv_out(fused)
+        return x * self.conv_out(fused)
 
 
 class C3k2_LSK(nn.Module):
-    def __init__(self, c1, c2, n=1, e=0.5, dilation=1):
-        super().__init__()
-        self.c = max(1, int(c2 * e))
+    def __init__(self, c1, c2, n=1, e=0.5, dilation=1):
+        super().__init__()
+        self.c = max(1, int(c2 * e))
 
-        self.cv1 = Conv(c1, 2 * self.c, 1)
-        self.cv2 = Conv((2 + n) * self.c, c2, 1)
+        self.cv1 = Conv(c1, 2 * self.c, 1)
+        self.cv2 = Conv((2 + n) * self.c, c2, 1)
 
-        self.m = nn.ModuleList(
-            Bottleneck(self.c, self.c, shortcut=True, e=1.0)
-            for _ in range(n)
-        )
+        # Using standard YOLO Bottlenecks
+        from .block import Bottleneck
+        self.m = nn.ModuleList(
+            Bottleneck(self.c, self.c, shortcut=True, g=1, k=((3, 3), (3, 3)), e=1.0)
+            for _ in range(n)
+        )
 
-        self.lsk = LSK(c2, dilation=dilation)
-        self.add = c1 == c2
+        self.lsk = LSK(c2, dilation=dilation)
+        self.add = c1 == c2
 
-    def forward(self, x):
-        y = list(self.cv1(x).chunk(2, 1))
-        y.extend(m(y[-1]) for m in self.m)
+    def forward(self, x):
+        y = list(self.cv1(x).chunk(2, 1))
+        y.extend(m(y[-1]) for m in self.m)
 
-        out = self.cv2(torch.cat(y, 1))
-        out = self.lsk(out)
+        out = self.cv2(torch.cat(y, 1))
+        out = self.lsk(out)
 
-        return out + x if self.add else out   
-        #00
+        return out + x if self.add else out
 
 
 
