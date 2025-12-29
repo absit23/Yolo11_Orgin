@@ -2041,6 +2041,8 @@ class LSK(nn.Module):
         # Large kernel spatial context (Dilation 1 or 3)
         if dilation == 1:
             self.dw7 = nn.Conv2d(dim, dim, 7, padding=3, groups=dim, dilation=1)
+        elif dilation == 2:
+            self.dw7 = nn.Conv2d(dim, dim, 7, padding=6, groups=dim, dilation=2)
         else:
             # Default to dilation 3 (Receptive Field ~23)
             self.dw7 = nn.Conv2d(dim, dim, 7, padding=9, groups=dim, dilation=3)
