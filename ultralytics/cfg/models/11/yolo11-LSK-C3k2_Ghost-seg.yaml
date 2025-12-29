@@ -38,7 +38,7 @@ head:
 
   - [-1, 1, Conv, [512, 3, 2]]                      # 20 - Downsample to match P5 spatial size
   - [[-1, 10], 1, Concat, [1]]                      # 21 - P5 concat
-  - [-1, 2, C3k2_LSK, [1024, True, 3]]              # 22 - Large crack LSK (dilation=3)
+  - [-1, 2, C3k2_LSK, [512, True, 3]]              # 22 - Large crack LSK (dilation=3)
 
   # Segmentation Head (P3, P4, P5 scales)
   - [[16, 19, 22], 1, Segment, [nc, 32, 256]]       # 23 - Final Prediction
