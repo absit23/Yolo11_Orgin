@@ -2095,7 +2095,7 @@ class C3k2_LSK(nn.Module):
         out = self.cv2(torch.cat(y, 1))
         out = self.lsk(out)
 
-        return out + x if self.add else out      check it up
+        return out + x if self.add else out   
         #00
 
 
