@@ -2041,9 +2041,14 @@ class LSK(nn.Module):
         # Large kernel spatial context (SEQUENTIAL, not parallel)
         if dilation == 1:
             self.dw7 = nn.Conv2d(dim, dim, 7, padding=3, groups=dim, dilation=1)
+        elif dilation == 2:
+            # dilation = 2 → effective RF ≈ 17
+            self.dw7 = nn.Conv2d(dim, dim, 7, padding=6, groups=dim, dilation=2)
         else:
-            # dilation = 3 → effective RF ≈ 23
+             #dilation = 3 → effective RF ≈ 23
             self.dw7 = nn.Conv2d(dim, dim, 7, padding=9, groups=dim, dilation=3)
+
+        
 
         dim_half = max(1, dim // 2)
 
