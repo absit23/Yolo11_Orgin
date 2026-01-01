@@ -2110,11 +2110,6 @@ Sequential application: LSK (context) → Triplet (refinement)
 Add this to ultralytics/nn/modules/block.py
 """
 
-import torch
-import torch.nn as nn
-from ultralytics.nn.modules.conv import Conv
-
-
 # ==================== Triplet Attention Components ====================
 
 class BasicConv(nn.Module):
