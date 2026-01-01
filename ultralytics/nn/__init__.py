@@ -24,4 +24,5 @@ __all__ = (
     "SegmentationModel",
     "ClassificationModel",
     "BaseModel",
+    "C3k2_LSK_Triplet",
 )
