@@ -23,6 +23,7 @@ __all__ = (
     "CBAM",
     "BasicConv",
     "ChannelPool",
+    "SpatialGate",
     "TripletAttention",
     "Concat",
     "RepConv",
