@@ -55,6 +55,8 @@ __all__ = (
     "C3k_Ghost",
     "LSK",
     "C3k2_LSK",
+    "C3k2_LSK_Triplet",
+    "BottleneckLSK_Triplet",
     "TorchVision",
 )
 
