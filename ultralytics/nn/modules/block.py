@@ -2031,47 +2031,32 @@ class C3k_Ghost(C3):
 #new guest here);
 # ==================== LSK Attention ====================
 class LSK(nn.Module):
-    def __init__(self, dim, dilation=1):
+    """Large Selective Kernel Attention."""
+    def __init__(self, dim, dilation=3):
         super().__init__()
-        dim = int(dim)
-
-        # Local context
         self.dw5 = nn.Conv2d(dim, dim, 5, padding=2, groups=dim)
-
-        # Large kernel spatial context (Dilation 1 or 3)
         if dilation == 1:
             self.dw7 = nn.Conv2d(dim, dim, 7, padding=3, groups=dim, dilation=1)
         elif dilation == 2:
             self.dw7 = nn.Conv2d(dim, dim, 7, padding=6, groups=dim, dilation=2)
         else:
-            # Default to dilation 3 (Receptive Field ~23)
             self.dw7 = nn.Conv2d(dim, dim, 7, padding=9, groups=dim, dilation=3)
 
         dim_half = max(1, dim // 2)
-
         self.pw1 = nn.Conv2d(dim, dim_half, 1)
         self.pw2 = nn.Conv2d(dim, dim_half, 1)
-
         self.conv_squeeze = nn.Conv2d(2, 2, 7, padding=3)
         self.conv_out = nn.Conv2d(dim_half, dim, 1)
 
     def forward(self, x):
         u1 = self.dw5(x)
-        u2 = self.dw7(u1)  # Sequential context
-
-        a1 = self.pw1(u1)
-        a2 = self.pw2(u2)
-
+        u2 = self.dw7(u1)
+        a1, a2 = self.pw1(u1), self.pw2(u2)
         attn = torch.cat([a1, a2], dim=1)
-
         avg = torch.mean(attn, dim=1, keepdim=True)
         mx, _ = torch.max(attn, dim=1, keepdim=True)
-
-        # Spatial attention
         sig = self.conv_squeeze(torch.cat([avg, mx], dim=1)).sigmoid()
-
         fused = a1 * sig[:, 0:1] + a2 * sig[:, 1:2]
-
         return x * self.conv_out(fused)
 
 
@@ -2112,212 +2097,38 @@ Add this to ultralytics/nn/modules/block.py
 
 # ==================== Triplet Attention Components ====================
 
-class BasicConv(nn.Module):
-    """Basic convolution with BN and ReLU."""
-    
-    def __init__(self, in_planes, out_planes, kernel_size, stride=1, padding=0, 
-                 dilation=1, groups=1, relu=True, bn=True, bias=False):
-        super(BasicConv, self).__init__()
-        self.out_channels = out_planes
-        self.conv = nn.Conv2d(in_planes, out_planes, kernel_size=kernel_size,
-                            stride=stride, padding=padding, dilation=dilation,
-                            groups=groups, bias=bias)
-        self.bn = nn.BatchNorm2d(out_planes, eps=1e-5, momentum=0.01, affine=True) if bn else None
-        self.relu = nn.ReLU() if relu else None
-
-    def forward(self, x):
-        x = self.conv(x)
-        if self.bn is not None:
-            x = self.bn(x)
-        if self.relu is not None:
-            x = self.relu(x)
-        return x
-
-
-class ChannelPool(nn.Module):
-    """Channel pooling: concat max and mean."""
-    
-    def forward(self, x):
-        return torch.cat(
-            (torch.max(x, 1)[0].unsqueeze(1), torch.mean(x, 1).unsqueeze(1)), 
-            dim=1
-        )
-
-
-class SpatialGate(nn.Module):
-    """Spatial attention gate."""
-    
-    def __init__(self):
-        super(SpatialGate, self).__init__()
-        kernel_size = 7
-        self.compress = ChannelPool()
-        self.spatial = BasicConv(2, 1, kernel_size, stride=1, 
-                                padding=(kernel_size - 1) // 2, relu=False)
-
-    def forward(self, x):
-        x_compress = self.compress(x)
-        x_out = self.spatial(x_compress)
-        scale = torch.sigmoid(x_out)
-        return x * scale
-
-
-class TripletAttention(nn.Module):
-    """
-    Triplet Attention: Cross-dimensional interaction.
-    Applies attention across H, W, and C dimensions.
-    """
-    
-    def __init__(self, gate_channels=None, reduction_ratio=16, pool_types=None, no_spatial=False):
-        super(TripletAttention, self).__init__()
-        self.ChannelGateH = SpatialGate()
-        self.ChannelGateW = SpatialGate()
-        self.no_spatial = no_spatial
-        if not no_spatial:
-            self.SpatialGate = SpatialGate()
-
-    def forward(self, x):
-        # Height dimension
-        x_perm1 = x.permute(0, 2, 1, 3).contiguous()
-        x_out1 = self.ChannelGateH(x_perm1)
-        x_out11 = x_out1.permute(0, 2, 1, 3).contiguous()
-        
-        # Width dimension
-        x_perm2 = x.permute(0, 3, 2, 1).contiguous()
-        x_out2 = self.ChannelGateW(x_perm2)
-        x_out21 = x_out2.permute(0, 3, 2, 1).contiguous()
-        
-        # Spatial dimension (optional)
-        if not self.no_spatial:
-            x_out = self.SpatialGate(x)
-            x_out = (1 / 3) * (x_out + x_out11 + x_out21)
-        else:
-            x_out = (1 / 2) * (x_out11 + x_out21)
-        
-        return x_out
-
-
-
-
-
-
-# ==================== Combined LSK + Triplet Bottleneck ====================
-
 class BottleneckLSK_Triplet(nn.Module):
-    """
-    Bottleneck with LSK + Triplet Attention (Sequential).
-    
-    Flow: Input → Conv1 → Conv2 → LSK → Triplet → Output
-          [Feature extraction] [Context] [Refinement]
-    """
-    
+    """Bottleneck with LSK + Triplet Attention."""
     def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5, dilation=3):
         super().__init__()
         c_ = max(1, int(c2 * e))
-        
-        # Standard bottleneck convolutions
         self.cv1 = Conv(c1, c_, k[0], 1)
         self.cv2 = Conv(c_, c2, k[1], 1, g=g)
-        
-        # Sequential attention: LSK → Triplet
         self.lsk = LSK(c2, dilation=dilation)
-        self.triplet = TripletAttention(gate_channels=c2, no_spatial=False)
-        
+        self.triplet = TripletAttention()
         self.add = shortcut and c1 == c2
 
     def forward(self, x):
-        # Standard bottleneck
         h = self.cv2(self.cv1(x))
-        
-        # Sequential attention application
-        h = self.lsk(h)        # Step 1: Large receptive field (context)
-        h = self.triplet(h)    # Step 2: Cross-dimensional refinement (boundaries)
-        
+        h = self.triplet(self.lsk(h)) 
         return x + h if self.add else h
 
-
-# ==================== C3k2 with LSK + Triplet ====================
-
 class C3k2_LSK_Triplet(nn.Module):
-    """
-    C3k2 module with LSK + Triplet Attention.
-    
-    Designed for crack segmentation:
-    - LSK: Captures crack continuity via large receptive field
-    - Triplet: Refines mask boundaries via cross-dimensional attention
-    """
-    
+    """C3k2 module with LSK + Triplet Attention."""
     def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True, dilation=3):
-        """
-        Initialize C3k2_LSK_Triplet.
-        
-        Args:
-            c1 (int): Input channels
-            c2 (int): Output channels
-            n (int): Number of bottleneck blocks
-            c3k (bool): Use C3k mode (not used, compatibility)
-            e (float): Channel expansion ratio
-            g (int): Groups for convolution
-            shortcut (bool): Use shortcut connections
-            dilation (int): Dilation rate for LSK (1, 2, or 3)
-        """
         super().__init__()
-        
-        # Standard C3k2 structure
         self.c = max(1, int(c2 * e))
         self.cv1 = Conv(c1, 2 * self.c, 1, 1)
         self.cv2 = Conv((2 + n) * self.c, c2, 1)
-        
-        # Bottleneck modules with LSK + Triplet
         self.m = nn.ModuleList(
             BottleneckLSK_Triplet(self.c, self.c, shortcut, g, k=(3, 3), e=1.0, dilation=dilation)
             for _ in range(n)
         )
 
     def forward(self, x):
-        """Forward pass through C3k2_LSK_Triplet."""
         y = list(self.cv1(x).chunk(2, 1))
         y.extend(m(y[-1]) for m in self.m)
         return self.cv2(torch.cat(y, 1))
-
-    def forward_split(self, x):
-        """Memory-efficient forward pass."""
-        y = list(self.cv1(x).split((self.c, self.c), 1))
-        y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
-
-
-# ==================== Usage Example ====================
-
-if __name__ == "__main__":
-    # Test the module
-    batch_size = 2
-    channels = 128
-    height, width = 32, 32
-    
-    # Create test input
-    x = torch.randn(batch_size, channels, height, width)
-    
-    # Create module (for neck layer with c=128)
-    model = C3k2_LSK_Triplet(
-        c1=channels,
-        c2=channels,
-        n=2,
-        shortcut=True,
-        e=0.5,
-        dilation=3
-    )
-    
-    # Forward pass
-    output = model(x)
-    
-    print(f"Input shape:  {x.shape}")
-    print(f"Output shape: {output.shape}")
-    print(f"Parameters:   {sum(p.numel() for p in model.parameters()):,}")
-    
-    # Test attention flow
-    print("\n✅ C3k2_LSK_Triplet module working correctly!")
-    print(f"   - LSK captures large receptive field (context)")
-    print(f"   - Triplet refines spatial boundaries")
 
 
 class SAVPE(nn.Module):
