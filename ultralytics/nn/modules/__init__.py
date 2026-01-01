@@ -62,6 +62,8 @@ from .block import (
     C3k_Ghost,
     LSK,
     C3k2_LSK,
+    C3k2_LSK_Triplet,
+    BottleneckLSK_Triplet,
     TorchVision,
 )
 from .conv import (
@@ -79,6 +81,11 @@ from .conv import (
     LightConv,
     RepConv,
     SpatialAttention,
+    BasicConv,
+    ChannelPool,
+    SpatialGate,
+    TripletAttention, 
+
 )
 from .head import (
     OBB,
@@ -118,6 +125,10 @@ __all__ = (
     "GhostConv",
     "ChannelAttention",
     "SpatialAttention",
+    "BasicConv",
+    "ChannelPool",
+    "SpatialGate",
+    "TripletAttention", 
     "CBAM",
     "Concat",
     "TransformerLayer",
@@ -187,4 +198,6 @@ __all__ = (
     "C3k_Ghost",
     "LSK",
     "C3k2_LSK",
+    "BottleneckLSK_Triplet",
+    
 )
