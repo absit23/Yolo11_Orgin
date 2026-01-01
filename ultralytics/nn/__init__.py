@@ -12,7 +12,7 @@ from .tasks import (
     torch_safe_load,
     yaml_model_load,
 )
-
+from .modules.block import C3k2_LSK_Triplet
 __all__ = (
     "load_checkpoint",
     "parse_model",
