@@ -1673,6 +1673,8 @@ def parse_model(d, ch, verbose=True):
                 legacy = False
                 if scale in "mlx":
                     args[3] = True
+
+            
                     
             if m is A2C2f:
                 legacy = False
