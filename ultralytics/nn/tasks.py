@@ -71,6 +71,7 @@ from ultralytics.nn.modules import (
     C3k_Ghost,
     LSK,
     C3k2_LSK,
+    C3k2_LSK_Triplet,
     v10Detect,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, YAML, colorstr, emojis
@@ -1617,6 +1618,7 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
             C3k2_Ghost,
             C3k_Ghost,
+            C3k2_LSK_Triplet,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1637,6 +1639,7 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             C2PSA,
             C3k2_Ghost,
+            C3k2_LSK_Triplet,
             A2C2f,
         }
     )
@@ -1666,7 +1669,7 @@ def parse_model(d, ch, verbose=True):
                 args.insert(2, n)  # number of repeats
                 n = 1
                 
-            if m in {C3k2, C3k2_LSK}:  # for M/L/X sizes
+            if m in {C3k2, C3k2_LSK, C3k2_LSK_Triplet}:  # for M/L/X sizes
                 legacy = False
                 if scale in "mlx":
                     args[3] = True
