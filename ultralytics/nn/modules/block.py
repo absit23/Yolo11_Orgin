@@ -9,8 +9,9 @@ import torch.nn.functional as F
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
-from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, BasicConv, ChannelPool, SpatialGate, TripletAttention, autopad
+from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad
 from .transformer import TransformerBlock
+from ultralytics.nn.modules.block import C2f, Bottleneck
 
 __all__ = (
     "DFL",
@@ -54,9 +55,10 @@ __all__ = (
     "C3k2_Ghost",
     "C3k_Ghost",
     "LSK",
-    "C3k2_LSK",
-    "C3k2_LSK_Triplet",
-    "BottleneckLSK_Triplet",
+    "TripletAttention",
+    "StripLSK",
+    "Bottleneck_Split",
+    "C3k2_LSK_Triplet_Split",
     "TorchVision",
 )
 
@@ -2060,77 +2062,132 @@ class LSK(nn.Module):
         sig = self.conv_squeeze(torch.cat([avg, mx], dim=1)).sigmoid()
         fused = a1 * sig[:, 0:1] + a2 * sig[:, 1:2]
         return x * self.conv_out(fused)
-
-
-class C3k2_LSK(nn.Module):
-    def __init__(self, c1, c2, n=1, e=0.5, dilation=1):
+# ---------------------------------------------------------
+# 1. Lightweight Triplet Attention (Verified < 3k params)
+# ---------------------------------------------------------
+class TripletAttention(nn.Module):
+    """
+    Lightweight Triplet Attention.
+    Computes cross-dimension interaction (C-H, C-W, H-W) using 7x7 spatial convs.
+    """
+    def __init__(self, kernel_size=7):
         super().__init__()
-        self.c = max(1, int(c2 * e))
-
-        self.cv1 = Conv(c1, 2 * self.c, 1)
-        self.cv2 = Conv((2 + n) * self.c, c2, 1)
-
-        # Using standard YOLO Bottlenecks
-        from .block import Bottleneck
-        self.m = nn.ModuleList(
-            Bottleneck(self.c, self.c, shortcut=True, g=1, k=((3, 3), (3, 3)), e=1.0)
-            for _ in range(n)
-        )
-
-        self.lsk = LSK(c2, dilation=dilation)
-        self.add = c1 == c2
+        self.spatial_conv = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
-        y = list(self.cv1(x).chunk(2, 1))
-        y.extend(m(y[-1]) for m in self.m)
+        # Branch 1: Channel-Height (H-C interaction)
+        x_perm1 = x.permute(0, 2, 1, 3).contiguous()
+        attn1 = self._spatial_attn(x_perm1)
+        b1 = (x_perm1 * attn1).permute(0, 2, 1, 3)
 
-        out = self.cv2(torch.cat(y, 1))
-        out = self.lsk(out)
+        # Branch 2: Channel-Width (W-C interaction)
+        x_perm2 = x.permute(0, 3, 2, 1).contiguous()
+        attn2 = self._spatial_attn(x_perm2)
+        b2 = (x_perm2 * attn2).permute(0, 3, 2, 1)
 
-        return out + x if self.add else out
+        # Branch 3: Spatial (H-W interaction)
+        attn3 = self._spatial_attn(x)
+        b3 = x * attn3
 
-#second new guest here ;):
-"""
-C3k2 with LSK + Triplet Attention for Crack Segmentation
-Sequential application: LSK (context) → Triplet (refinement)
+        return (b1 + b2 + b3) / 3
 
-Add this to ultralytics/nn/modules/block.py
-"""
+    def _spatial_attn(self, x):
+        # Compresses channel dim to 2 (Mean + Max) -> Conv -> Sigmoid
+        mean_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        return self.sigmoid(self.spatial_conv(torch.cat([mean_out, max_out], dim=1)))
 
-# ==================== Triplet Attention Components ====================
-
-class BottleneckLSK_Triplet(nn.Module):
-    """Bottleneck with LSK + Triplet Attention."""
-    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5, dilation=3):
+# ---------------------------------------------------------
+# 2. Strip-LSK (Large Selective Kernel - Decomposed)
+# ---------------------------------------------------------
+class StripLSK(nn.Module):
+    """
+    Optimized LSK for Cracks.
+    Decomposes large kernels into Strips (1xK, Kx1) to match crack morphology.
+    Massively cheaper than standard square kernels.
+    """
+    def __init__(self, dim, k=11):
         super().__init__()
-        c_ = max(1, int(c2 * e))
+        # Depthwise Horizontal Strip
+        self.conv_h = nn.Conv2d(dim, dim, (1, k), padding=(0, k//2), groups=dim, bias=False)
+        # Depthwise Vertical Strip
+        self.conv_v = nn.Conv2d(dim, dim, (k, 1), padding=(k//2, 0), groups=dim, bias=False)
+        # Spatial Aggregation
+        self.conv_s = nn.Conv2d(dim, dim, 5, padding=2, groups=dim, bias=False)
+        # Channel Mixing (The only heavy part, but run on reduced channels)
+        self.conv_1x1 = nn.Conv2d(dim, dim, 1, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        attn = self.conv_h(x)
+        attn = self.conv_v(attn)
+        attn = self.conv_s(attn)
+        attn = self.conv_1x1(attn)
+        return x * self.sigmoid(attn)
+
+# ---------------------------------------------------------
+# 3. The "Split" Bottleneck (The Magic Fix)
+# ---------------------------------------------------------
+class Bottleneck_Split(nn.Module):
+    """
+    Splits the bottleneck channels:
+    - 50% go to StripLSK (Context/Connectivity)
+    - 50% go to Triplet (Sharpness/Edges)
+    """
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
+        super().__init__()
+        c_ = int(c2 * e)  # Hidden channels
         self.cv1 = Conv(c1, c_, k[0], 1)
         self.cv2 = Conv(c_, c2, k[1], 1, g=g)
-        self.lsk = LSK(c2, dilation=dilation)
-        self.triplet = TripletAttention()
         self.add = shortcut and c1 == c2
+        
+        # Split point: Half of hidden channels
+        self.split_c = c_ // 2
+        # Ensure even split
+        if self.split_c * 2 != c_:
+             self.split_c = c_ - self.split_c 
+
+        # Branch 1: LSK for Context
+        self.branch_lsk = StripLSK(self.split_c, k=11)
+        
+        # Branch 2: Triplet for Edges
+        self.branch_triplet = TripletAttention()
 
     def forward(self, x):
-        h = self.cv2(self.cv1(x))
-        h = self.triplet(self.lsk(h)) 
-        return x + h if self.add else h
+        # 1. Initial expansion (Standard Bottleneck start)
+        y = self.cv1(x)
+        
+        # 2. Split Logic
+        y_lsk, y_triplet = torch.split(y, [self.split_c, y.shape[1] - self.split_c], dim=1)
+        
+        # 3. Parallel Processing
+        out_lsk = self.branch_lsk(y_lsk)
+        out_triplet = self.branch_triplet(y_triplet)
+        
+        # 4. Concatenate & Final Projection
+        y_fused = torch.cat([out_lsk, out_triplet], dim=1)
+        y_out = self.cv2(y_fused)
+        
+        return x + y_out if self.add else y_out
 
-class C3k2_LSK_Triplet(nn.Module):
-    """C3k2 module with LSK + Triplet Attention."""
-    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True, dilation=3):
-        super().__init__()
-        self.c = max(1, int(c2 * e))
-        self.cv1 = Conv(c1, 2 * self.c, 1, 1)
-        self.cv2 = Conv((2 + n) * self.c, c2, 1)
+# ---------------------------------------------------------
+# 4. The Wrapper Class (Drop-in replacement for C3k2)
+# ---------------------------------------------------------
+class C3k2_LSK_Triplet_Split(C2f):
+    """
+    CSP Bottleneck with Split Attention.
+    Replaces standard Bottlenecks with Bottleneck_Split.
+    """
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        # Overwrite self.m with our optimized bottlenecks
+        # c1 is input, c2 is output, self.c is hidden dimension
         self.m = nn.ModuleList(
-            BottleneckLSK_Triplet(self.c, self.c, shortcut, g, k=(3, 3), e=1.0, dilation=dilation)
+            Bottleneck_Split(self.c, self.c, shortcut, g, k=(3, 3), e=1.0)
             for _ in range(n)
         )
 
-    def forward(self, x):
-        y = list(self.cv1(x).chunk(2, 1))
-        y.extend(m(y[-1]) for m in self.m)
-        return self.cv2(torch.cat(y, 1))
 
 
 class SAVPE(nn.Module):
