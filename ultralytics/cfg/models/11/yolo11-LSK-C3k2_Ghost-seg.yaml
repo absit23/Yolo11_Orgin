@@ -1,57 +1,51 @@
 # YOLOv11-seg: Ghost-Backbone + Split-Attention Neck
-# Target: ~2.8M Parameters | "Nano" Scale | Crack Optimized
+# Clean Version: Uses default expansion (e=0.5) for head layers
+# Target: ~2.8M Parameters (Standard Nano Balance)
 
 # Parameters
-nc: 1  # Single class: crack
+nc: 1
 scales:
-  n: [0.50, 0.25, 1024] # Nano scale constraints
+  n: [0.50, 0.25, 1024]
 
-# Backbone: Ghost Implementation
-# rationale: Ghost modules reduce redundancy in initial feature extraction
+# Backbone (Unchanged - Efficient Ghost)
 backbone:
   - [-1, 1, Conv, [64, 3, 2]]              # 0-P1/2
   - [-1, 1, Conv, [128, 3, 2]]             # 1-P2/4
-  - [-1, 2, C3k2_Ghost, [256, False, 0.25]] # 2
+  - [-1, 2, C3k2_Ghost, [256, False, 0.25]] # 2 (Explicit 0.25 for early layer efficiency)
   - [-1, 1, Conv, [256, 3, 2]]             # 3-P3/8
-  - [-1, 2, C3k2_Ghost, [512, False, 0.25]] # 4
+  - [-1, 2, C3k2_Ghost, [512, False, 0.25]] # 4 (Explicit 0.25 for early layer efficiency)
   - [-1, 1, Conv, [512, 3, 2]]             # 5-P4/16
-  - [-1, 2, C3k2_Ghost, [512, True]]       # 6
+  - [-1, 2, C3k2_Ghost, [512, True]]       # 6 (Implicit 0.5)
   - [-1, 1, Conv, [1024, 3, 2]]            # 7-P5/32
-  - [-1, 2, C3k2_Ghost, [1024, True]]      # 8
+  - [-1, 2, C3k2_Ghost, [1024, True]]      # 8 (Implicit 0.5)
   - [-1, 1, SPPF, [1024, 5]]               # 9
   - [-1, 2, C2PSA, [1024]]                 # 10
 
-# Head: Bi-directional Feature Pyramid (FPN+PAN) with Split-Attention Exit Gates
+# Head (Cleaned - Implicit Defaults)
 head:
-  # --- Top-Down Pathway (High Semantic to High Detail) ---
-  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]      # 11
-  - [[-1, 6], 1, Concat, [1]]                       # 12 - Fusion with P4
-  - [-1, 2, C3k2, [512, False]]                     # 13 - Standard C3k2 for transition
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 6], 1, Concat, [1]]
+  - [-1, 2, C3k2, [512, False]] # 13
 
-  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]      # 14
-  - [[-1, 4], 1, Concat, [1]]                       # 15 - Fusion with P3
-  
-  # === EXIT GATE P3 (High Resolution / Fine Cracks) ===
-  # Use Split Block. 
-  # LSK(11x1) catches fragments. Triplet ensures 1px width isn't lost.
-  - [-1, 2, C3k2_LSK_Triplet_Split, [256, False, 1]] # 16
+  - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
+  - [[-1, 4], 1, Concat, [1]]
 
-  # --- Bottom-Up Pathway (High Detail to High Semantic) ---
-  - [-1, 1, Conv, [256, 3, 2]]                      # 17 - Downsample
-  - [[-1, 13], 1, Concat, [1]]                      # 18 - Fusion with P4 Head
-  
-  # === EXIT GATE P4 (Medium Resolution) ===
-  # The "Workhorse" layer. Most cracks are best defined here.
-  - [-1, 2, C3k2_LSK_Triplet_Split, [512, False, 1]] # 19
+  # === FIX 1: P3 Layer ===
+  # Removed explicit '0.25'. Now uses default e=0.5
+  - [-1, 2, C3k2_LSK_Triplet_Split, [256, False]] # 16
 
-  - [-1, 1, Conv, [512, 3, 2]]                      # 20 - Downsample
-  - [[-1, 10], 1, Concat, [1]]                      # 21 - Fusion with P5 Backbone
-  
-  # === EXIT GATE P5 (Low Resolution / Global Context) ===
-  # OPTIMIZATION: Output channels restricted to 512 (vs 1024).
-  # Rationale: Cracks don't need 1024 semantic channels. Saves massive parameters.
-  - [-1, 2, C3k2_LSK_Triplet_Split, [512, True, 1]]  # 22
+  - [-1, 1, Conv, [256, 3, 2]]
+  - [[-1, 13], 1, Concat, [1]]
 
-  # Segmentation Head
-  # Input: [P3(256), P4(512), P5(512)]
-  - [[16, 19, 22], 1, Segment, [nc, 32, 256]]       # 23
+  # === FIX 2: P4 Layer ===
+  # Removed explicit '0.25'. Now uses default e=0.5
+  - [-1, 2, C3k2_LSK_Triplet_Split, [512, False]] # 19
+
+  - [-1, 1, Conv, [512, 3, 2]]
+  - [[-1, 10], 1, Concat, [1]]
+
+  # === FIX 3: P5 Layer ===
+  # Removed explicit '0.25'. Now uses default e=0.5
+  - [-1, 2, C3k2_LSK_Triplet_Split, [512, True]]  # 22
+
+  - [[16, 19, 22], 1, Segment, [nc, 32, 256]] # 23
