@@ -61,9 +61,7 @@ from .block import (
     C3k2_Ghost,    # <--- ADD THIS
     C3k_Ghost,
     LSK,
-    C3k2_LSK,
-    C3k2_LSK_Triplet,
-    BottleneckLSK_Triplet,
+    C3k2_LSK_Triplet_Split,
     TorchVision,
 )
 from .conv import (
@@ -81,10 +79,6 @@ from .conv import (
     LightConv,
     RepConv,
     SpatialAttention,
-    BasicConv,
-    ChannelPool,
-    SpatialGate,
-    TripletAttention, 
 
 )
 from .head import (
@@ -197,7 +191,6 @@ __all__ = (
     "C3k2_Ghost",  # <--- ADD THIS
     "C3k_Ghost",
     "LSK",
-    "C3k2_LSK",
-    "BottleneckLSK_Triplet",
+    "C3k2_LSK_Triplet_Split",
     
 )
