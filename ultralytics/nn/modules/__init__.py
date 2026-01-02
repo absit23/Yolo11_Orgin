@@ -4,17 +4,6 @@ Ultralytics neural network modules.
 
 This module provides access to various neural network components used in Ultralytics models, including convolution
 blocks, attention mechanisms, transformer components, and detection/segmentation heads.
-
-Examples:
-    Visualize a module with Netron
-    >>> from ultralytics.nn.modules import Conv
-    >>> import torch
-    >>> import subprocess
-    >>> x = torch.ones(1, 128, 40, 40)
-    >>> m = Conv(128, 128)
-    >>> f = f"{m._get_name()}.onnx"
-    >>> torch.onnx.export(m, x, f)
-    >>> subprocess.run(f"onnxslim {f} {f} && open {f}", shell=True, check=True)  # pip install onnxslim
 """
 
 from .block import (
@@ -58,10 +47,10 @@ from .block import (
     RepVGGDW,
     ResNetLayer,
     SCDown,
-    C3k2_Ghost,    # <--- ADD THIS
-    C3k_Ghost,
-    LSK,
-    C3k2_LSK_Triplet_Split,
+    C3k2_Ghost,             # <--- Custom
+    C3k_Ghost,              # <--- Custom
+    LSK,                    # <--- Custom
+    C3k2_LSK_Triplet_Split, # <--- Custom (The new one)
     TorchVision,
 )
 from .conv import (
@@ -79,7 +68,6 @@ from .conv import (
     LightConv,
     RepConv,
     SpatialAttention,
-
 )
 from .head import (
     OBB,
@@ -119,10 +107,6 @@ __all__ = (
     "GhostConv",
     "ChannelAttention",
     "SpatialAttention",
-    "BasicConv",
-    "ChannelPool",
-    "SpatialGate",
-    "TripletAttention", 
     "CBAM",
     "Concat",
     "TransformerLayer",
@@ -188,9 +172,8 @@ __all__ = (
     "TorchVision",
     "Index",
     "A2C2f",
-    "C3k2_Ghost",  # <--- ADD THIS
-    "C3k_Ghost",
-    "LSK",
-    "C3k2_LSK_Triplet_Split",
-    
+    "C3k2_Ghost",            # <--- Exported
+    "C3k_Ghost",             # <--- Exported
+    "LSK",                   # <--- Exported
+    "C3k2_LSK_Triplet_Split",# <--- Exported
 )
