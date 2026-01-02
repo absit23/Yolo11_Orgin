@@ -70,8 +70,7 @@ from ultralytics.nn.modules import (
     C3k2_Ghost,
     C3k_Ghost,
     LSK,
-    C3k2_LSK,
-    C3k2_LSK_Triplet,
+    C3k2_LSK_Triplet_Split,
     v10Detect,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, YAML, colorstr, emojis
@@ -1598,7 +1597,6 @@ def parse_model(d, ch, verbose=True):
             C2,
             C2f,
             C3k2,
-            C3k2_LSK,
             RepNCSPELAN4,
             ELAN1,
             ADown,
@@ -1618,7 +1616,7 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
             C3k2_Ghost,
             C3k_Ghost,
-            C3k2_LSK_Triplet,
+            C3k2_LSK_Triplet_Split,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1639,8 +1637,8 @@ def parse_model(d, ch, verbose=True):
             C2fCIB,
             C2PSA,
             C3k2_Ghost,
-            C3k2_LSK_Triplet,
             A2C2f,
+            C3k2_LSK_Triplet_Split,
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
@@ -1669,7 +1667,7 @@ def parse_model(d, ch, verbose=True):
                 args.insert(2, n)  # number of repeats
                 n = 1
                 
-            if m in {C3k2, C3k2_LSK, C3k2_LSK_Triplet}:  # for M/L/X sizes
+            if m in {C3k2}:  # for M/L/X sizes
                 legacy = False
                 if scale in "mlx":
                     args[3] = True
