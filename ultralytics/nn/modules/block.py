@@ -11,7 +11,6 @@ from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
 from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad
 from .transformer import TransformerBlock
-from ultralytics.nn.modules.block import C2f, Bottleneck
 
 __all__ = (
     "DFL",
