@@ -1,12 +1,13 @@
-# YOLOv11-seg: Ghost-Backbone + LSK-Neck (Optimized without P2)
-# Target: ~2.8M Parameters | Focused on P3, P4, P5 scales
+# YOLOv11-seg: Ghost-Backbone + Split-Attention Neck
+# Target: ~2.8M Parameters | "Nano" Scale | Crack Optimized
 
 # Parameters
 nc: 1  # Single class: crack
 scales:
-  n: [0.50, 0.25, 1024] # Nano scale
+  n: [0.50, 0.25, 1024] # Nano scale constraints
 
-# Backbone - Ghost Implementation (Lightweight Feature Extraction)
+# Backbone: Ghost Implementation
+# rationale: Ghost modules reduce redundancy in initial feature extraction
 backbone:
   - [-1, 1, Conv, [64, 3, 2]]              # 0-P1/2
   - [-1, 1, Conv, [128, 3, 2]]             # 1-P2/4
@@ -20,25 +21,37 @@ backbone:
   - [-1, 1, SPPF, [1024, 5]]               # 9
   - [-1, 2, C2PSA, [1024]]                 # 10
 
-# Head - LSK at optimal fusion points
+# Head: Bi-directional Feature Pyramid (FPN+PAN) with Split-Attention Exit Gates
 head:
-  # Top-down pathway
+  # --- Top-Down Pathway (High Semantic to High Detail) ---
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]      # 11
-  - [[-1, 6], 1, Concat, [1]]                       # 12 - P4 fusion
-  - [-1, 2, C3k2, [512, False]]                     # 13
+  - [[-1, 6], 1, Concat, [1]]                       # 12 - Fusion with P4
+  - [-1, 2, C3k2, [512, False]]                     # 13 - Standard C3k2 for transition
 
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]      # 14
-  - [[-1, 4], 1, Concat, [1]]                       # 15 - P3 fusion
-  - [-1, 2, C3k2_LSK_Triplet, [256, False, 1, 0.25, 1]]           # 16 - P3 LSK (dilation=1)
+  - [[-1, 4], 1, Concat, [1]]                       # 15 - Fusion with P3
+  
+  # === EXIT GATE P3 (High Resolution / Fine Cracks) ===
+  # Use Split Block. 
+  # LSK(11x1) catches fragments. Triplet ensures 1px width isn't lost.
+  - [-1, 2, C3k2_LSK_Triplet_Split, [256, False, 1]] # 16
 
-  # Bottom-up pathway - FIXED: Changed Layer 17 from Upsample back to Conv
-  - [-1, 1, Conv, [256, 3, 2]]                      # 17 - Downsample to match P4 spatial size
-  - [[-1, 13], 1, Concat, [1]]                      # 18 - P4 concat (spatial sizes now match)
-  - [-1, 2, C3k2_LSK_Triplet, [512, False, 1, 0.25, 1]]           # 19 - Medium crack LSK
+  # --- Bottom-Up Pathway (High Detail to High Semantic) ---
+  - [-1, 1, Conv, [256, 3, 2]]                      # 17 - Downsample
+  - [[-1, 13], 1, Concat, [1]]                      # 18 - Fusion with P4 Head
+  
+  # === EXIT GATE P4 (Medium Resolution) ===
+  # The "Workhorse" layer. Most cracks are best defined here.
+  - [-1, 2, C3k2_LSK_Triplet_Split, [512, False, 1]] # 19
 
-  - [-1, 1, Conv, [512, 3, 2]]                      # 20 - Downsample to match P5 spatial size
-  - [[-1, 10], 1, Concat, [1]]                      # 21 - P5 concat
-  - [-1, 2, C3k2_LSK_Triplet, [512, True, 2, 0.25, 2]]             # 22 - Large crack LSK (dilation=3)
+  - [-1, 1, Conv, [512, 3, 2]]                      # 20 - Downsample
+  - [[-1, 10], 1, Concat, [1]]                      # 21 - Fusion with P5 Backbone
+  
+  # === EXIT GATE P5 (Low Resolution / Global Context) ===
+  # OPTIMIZATION: Output channels restricted to 512 (vs 1024).
+  # Rationale: Cracks don't need 1024 semantic channels. Saves massive parameters.
+  - [-1, 2, C3k2_LSK_Triplet_Split, [512, True, 1]]  # 22
 
-  # Segmentation Head (P3, P4, P5 scales)
-  - [[16, 19, 22], 1, Segment, [nc, 32, 256]]       # 23 - Final Prediction
+  # Segmentation Head
+  # Input: [P3(256), P4(512), P5(512)]
+  - [[16, 19, 22], 1, Segment, [nc, 32, 256]]       # 23
