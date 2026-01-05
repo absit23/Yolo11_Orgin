@@ -1,3 +1,10 @@
+# YOLOv11-seg: GhostConv-Backbone + SPD-Neck + Split-Head + Full Channels
+# Strategy:
+# 1. Backbone: GhostConv for downsampling (Efficiency) + Standard C3k2 (Quality)
+# 2. Neck: Focus/SPD for downsampling (Recall Preservation)
+# 3. Head: Full 1024-channel LSK-Triplet (Max Representation Power)
+
+# Parameters
 nc: 1
 scales:
   n: [0.50, 0.25, 1024]
