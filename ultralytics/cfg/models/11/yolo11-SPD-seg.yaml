@@ -28,13 +28,13 @@ backbone:
   - [-1, 2, C3k2, [512, False, 0.25]]      # 4
 
   # === GHOST Downsample ===
-  - [-1, 1, Focus, [512, 3, 2]]        # 5-P4/16
+  - [-1, 1, Focus, [512, 1]]        # 5-P4/16
   
   # Standard C3k2
   - [-1, 2, C3k2, [512, True]]             # 6
 
   # === GHOST Downsample ===
-  - [-1, 1, Focus, [1024, 3, 2]]       # 7-P5/32
+  - [-1, 1, Focus, [1024, 1]]       # 7-P5/32
   
   # Standard C3k2
   - [-1, 2, C3k2, [1024, True]]            # 8
