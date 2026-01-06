@@ -2198,12 +2198,15 @@ class C3k2_LSK_Triplet_Split(C2f):
 
 
 class GroupNorm2d(nn.Module):
+    """
+    Custom GroupNorm if needed, but nn.GroupNorm is preferred for stability.
+    """
     def __init__(self, n_groups: int = 16, n_channels: int = 16, eps: float = 1e-10):
         super(GroupNorm2d, self).__init__()
         assert n_channels % n_groups == 0
         self.n_groups = n_groups
-        self.gamma = nn.Parameter(torch.randn(n_channels, 1, 1))  # learnable gamma
-        self.beta = nn.Parameter(torch.zeros(n_channels, 1, 1))   # learnable beta
+        self.gamma = nn.Parameter(torch.randn(n_channels, 1, 1))
+        self.beta = nn.Parameter(torch.zeros(n_channels, 1, 1))
         self.eps = eps
 
     def forward(self, x):
@@ -2222,24 +2225,26 @@ class SRU(nn.Module):
     """
     def __init__(self, n_channels: int, n_groups: int = 16, gate_threshold: float = 0.5):
         super().__init__()
-        # initialize GroupNorm2d
-        self.gn = GroupNorm2d(n_groups=n_groups, n_channels=n_channels)
+        # Use nn.GroupNorm for better Mixed Precision support than custom implementation
+        self.gn = nn.GroupNorm(num_groups=n_groups, num_channels=n_channels)
         self.gate_threshold = gate_threshold
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
         gn_x = self.gn(x)
-        w_gamma = self.gn.gamma / sum(self.gn.gamma)  # cal gamma weight
+        
+        # Safe gamma extraction for nn.GroupNorm
+        w_gamma = self.gn.weight / (sum(self.gn.weight) + 1e-5)
+        w_gamma = w_gamma.view(1, -1, 1, 1)
         reweights = self.sigmoid(gn_x * w_gamma)      # importance
 
-        # Gate (using hard threshold as per provided code)
+        # Gate
         info_mask = reweights >= self.gate_threshold
         noninfo_mask = reweights < self.gate_threshold
         
-        # In PyTorch, multiplying boolean mask works, but explicit float conversion is safer for gradients
-        # However, the provided code implies hard gating.
-        x_1 = info_mask.float() * x
-        x_2 = noninfo_mask.float() * x
+        # --- FIX: Use type_as(x) instead of .float() to prevent FP16/FP32 crash ---
+        x_1 = info_mask.type_as(x) * x
+        x_2 = noninfo_mask.type_as(x) * x
         
         x = self.reconstruct(x_1, x_2)
         return x
@@ -2312,8 +2317,6 @@ class ScConv(nn.Module):
 class BottleneckScConv(nn.Module):
     """
     Bottleneck with ScConv replacing the second convolution.
-    Standard YOLO Bottleneck: Conv(1x1) -> Conv(3x3)
-    ScConv Bottleneck: Conv(1x1) -> ScConv
     """
     def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
         super().__init__()
@@ -2323,7 +2326,6 @@ class BottleneckScConv(nn.Module):
         self.cv1 = Conv(c1, c_, k[0], 1)
         
         # 2. ScConv (The heavy lifter)
-        # Note: ScConv handles the c_ -> c2 transition internally in CRU
         self.scconv = ScConv(c_, c2, kernel_size=k[1])
         
         self.add = shortcut and c1 == c2
@@ -2337,7 +2339,6 @@ class BottleneckScConv(nn.Module):
 class C3k2_ScConv(C2f):
     """
     C3k2 with ScConv bottlenecks
-    Drop-in replacement for standard C3k2
     """
     def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
         super().__init__(c1, c2, n, shortcut, g, e)
