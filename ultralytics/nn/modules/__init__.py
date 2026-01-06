@@ -51,6 +51,7 @@ from .block import (
     C3k_Ghost,              # <--- Custom
     LSK,                    # <--- Custom
     C3k2_LSK_Triplet_Split, # <--- Custom (The new one)
+    C3k2_ScConv,
     TorchVision,
 )
 from .conv import (
@@ -176,4 +177,5 @@ __all__ = (
     "C3k_Ghost",             # <--- Exported
     "LSK",                   # <--- Exported
     "C3k2_LSK_Triplet_Split",# <--- Exported
+    "C3k2_ScConv",
 )
