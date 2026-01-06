@@ -2197,57 +2197,35 @@ class C3k2_LSK_Triplet_Split(C2f):
 #==========================ScConv===========================================
 
 
-class GroupNorm2d(nn.Module):
-    """
-    Custom GroupNorm if needed, but nn.GroupNorm is preferred for stability.
-    """
-    def __init__(self, n_groups: int = 16, n_channels: int = 16, eps: float = 1e-10):
-        super(GroupNorm2d, self).__init__()
-        assert n_channels % n_groups == 0
-        self.n_groups = n_groups
-        self.gamma = nn.Parameter(torch.randn(n_channels, 1, 1))
-        self.beta = nn.Parameter(torch.zeros(n_channels, 1, 1))
-        self.eps = eps
-
-    def forward(self, x):
-        N, C, H, W = x.size()
-        x = x.reshape(N, self.n_groups, -1)
-        mean = x.mean(dim=2, keepdim=True)
-        std = x.std(dim=2, keepdim=True)
-        x = (x - mean) / (std + self.eps)
-        x = x.reshape(N, C, H, W)
-        return x * self.gamma + self.beta
-
-
 class SRU(nn.Module):
     """
-    Spatial Reconstruction Unit
+    Spatial Reconstruction Unit (Optimized)
     """
     def __init__(self, n_channels: int, n_groups: int = 16, gate_threshold: float = 0.5):
         super().__init__()
-        # Use nn.GroupNorm for better Mixed Precision support than custom implementation
-        self.gn = nn.GroupNorm(num_groups=n_groups, num_channels=n_channels)
+        # Safe GroupNorm: ensures num_groups <= n_channels
+        groups = min(n_groups, n_channels)
+        self.gn = nn.GroupNorm(num_groups=groups, num_channels=n_channels)
         self.gate_threshold = gate_threshold
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, x):
         gn_x = self.gn(x)
         
-        # Safe gamma extraction for nn.GroupNorm
+        # Safe gamma extraction
         w_gamma = self.gn.weight / (sum(self.gn.weight) + 1e-5)
         w_gamma = w_gamma.view(1, -1, 1, 1)
-        reweights = self.sigmoid(gn_x * w_gamma)      # importance
-
-        # Gate
+        reweights = self.sigmoid(gn_x * w_gamma)
+        
+        # Gate-based separation
         info_mask = reweights >= self.gate_threshold
         noninfo_mask = reweights < self.gate_threshold
         
-        # --- FIX: Use type_as(x) instead of .float() to prevent FP16/FP32 crash ---
+        # FP16-safe type conversion (Crucial for YOLO AMP training)
         x_1 = info_mask.type_as(x) * x
         x_2 = noninfo_mask.type_as(x) * x
         
-        x = self.reconstruct(x_1, x_2)
-        return x
+        return self.reconstruct(x_1, x_2)
 
     def reconstruct(self, x_1, x_2):
         x_11, x_12 = torch.split(x_1, x_1.size(1) // 2, dim=1)
@@ -2257,56 +2235,79 @@ class SRU(nn.Module):
 
 class CRU(nn.Module):
     """
-    Channel Reconstruction Unit
+    Channel Reconstruction Unit (Enhanced with Activations)
     """
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int = 3, alpha: float = 0.5, squeeze_ratio: int = 2, groups: int = 2):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int = 3, alpha: float = 0.5, squeeze_ratio: int = 2):
         super().__init__()
         
         self.up_channel = int(alpha * in_channels)
         self.low_channel = in_channels - self.up_channel
         
-        self.squeeze1 = nn.Conv2d(self.up_channel, self.up_channel // squeeze_ratio, kernel_size=1, bias=False)
-        self.squeeze2 = nn.Conv2d(self.low_channel, self.low_channel // squeeze_ratio, kernel_size=1, bias=False)
+        # Squeeze with Activation (Non-linearity helps learning)
+        self.squeeze1 = nn.Sequential(
+            nn.Conv2d(self.up_channel, self.up_channel // squeeze_ratio, 1, bias=False),
+            nn.BatchNorm2d(self.up_channel // squeeze_ratio),
+            nn.SiLU(inplace=True)
+        )
+        self.squeeze2 = nn.Sequential(
+            nn.Conv2d(self.low_channel, self.low_channel // squeeze_ratio, 1, bias=False),
+            nn.BatchNorm2d(self.low_channel // squeeze_ratio),
+            nn.SiLU(inplace=True)
+        )
 
-        # Upper Branch
-        self.GWC = nn.Conv2d(self.up_channel // squeeze_ratio, out_channels, kernel_size=kernel_size, stride=1, padding=kernel_size // 2, groups=groups)
-        self.PWC1 = nn.Conv2d(self.up_channel // squeeze_ratio, out_channels, kernel_size=1, bias=False)
+        # Adaptive Groups calculation
+        # Ensures groups >= 1 and groups <= channels
+        up_squeeze_ch = self.up_channel // squeeze_ratio
+        groups = min(max(1, up_squeeze_ch // 4), 32)
+        
+        # Upper Branch: Group Conv
+        self.GWC = nn.Conv2d(
+            up_squeeze_ch, 
+            out_channels, 
+            kernel_size=kernel_size, 
+            stride=1, 
+            padding=kernel_size // 2, 
+            groups=groups
+        )
+        self.PWC1 = nn.Conv2d(up_squeeze_ch, out_channels, 1, bias=False)
 
-        # Lower Branch
-        self.PWC2 = nn.Conv2d(self.low_channel // squeeze_ratio, out_channels - self.low_channel // squeeze_ratio, kernel_size=1, bias=False)
+        # Lower Branch: Pointwise
+        low_squeeze_ch = self.low_channel // squeeze_ratio
+        self.PWC2 = nn.Conv2d(low_squeeze_ch, out_channels - low_squeeze_ch, 1, bias=False)
         
         self.pool = nn.AdaptiveAvgPool2d(1)
 
     def forward(self, x):
-        # Split
+        # Split and Squeeze
         up, low = torch.split(x, [self.up_channel, self.low_channel], dim=1)
-        up, low = self.squeeze1(up), self.squeeze2(low)
+        up = self.squeeze1(up)
+        low = self.squeeze2(low)
 
-        # Transform
+        # Transform Upper
         y1 = self.GWC(up) + self.PWC1(up)
+        
+        # Transform Lower
         y2 = torch.cat([self.PWC2(low), low], dim=1)
 
-        # Fuse
+        # Fusion
         out = torch.cat([y1, y2], dim=1)
-        s = self.pool(out)
-        beta = F.softmax(s, dim=1) # Attention weights
-        beta1, beta2 = torch.split(beta, beta.size(1) // 2, dim=1)
+        attn = self.pool(out)
+        attn = F.softmax(attn, dim=1)
         
-        # Weighted Fusion
-        y = beta1 * y1 + beta2 * y2
-        return y
+        beta1, beta2 = torch.split(attn, attn.size(1) // 2, dim=1)
+        
+        return beta1 * y1 + beta2 * y2
 
 
 class ScConv(nn.Module):
     """
-    ScConv: Spatial and Channel Reconstruction Convolution
-    Wrapping SRU and CRU
+    ScConv Main Module
     """
-    def __init__(self, in_channels: int, out_channels: int, kernel_size: int = 3, stride: int = 1, padding: int = 1, n_groups: int = 16, gate_threshold: float = 0.5, alpha: float = 0.5, squeeze_ratio: int = 2, groups: int = 2):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int = 3, stride: int = 1, padding: int = 1, n_groups: int = 16, gate_threshold: float = 0.5, alpha: float = 0.5, squeeze_ratio: int = 2):
         super().__init__()
         
         self.SRU = SRU(n_channels=in_channels, n_groups=n_groups, gate_threshold=gate_threshold)
-        self.CRU = CRU(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, alpha=alpha, squeeze_ratio=squeeze_ratio, groups=groups)
+        self.CRU = CRU(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, alpha=alpha, squeeze_ratio=squeeze_ratio)
 
     def forward(self, x):
         x = self.SRU(x)
@@ -2316,22 +2317,22 @@ class ScConv(nn.Module):
 
 class BottleneckScConv(nn.Module):
     """
-    Bottleneck with ScConv replacing the second convolution.
+    Bottleneck with ScConv replacing second convolution.
     """
     def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
         super().__init__()
         c_ = int(c2 * e)  # Hidden channels
         
-        # 1. Expand / Project
+        # 1. Expand / Project (Standard)
         self.cv1 = Conv(c1, c_, k[0], 1)
         
         # 2. ScConv (The heavy lifter)
+        # Note: ScConv internally handles c_ -> c2 via CRU
         self.scconv = ScConv(c_, c2, kernel_size=k[1])
         
         self.add = shortcut and c1 == c2
 
     def forward(self, x):
-        # cv1 -> scconv
         y = self.scconv(self.cv1(x))
         return x + y if self.add else y
 
@@ -2342,7 +2343,6 @@ class C3k2_ScConv(C2f):
     """
     def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
         super().__init__(c1, c2, n, shortcut, g, e)
-        # Replace bottlenecks with ScConv version
         self.m = nn.ModuleList(
             BottleneckScConv(self.c, self.c, shortcut, g, k=(3, 3), e=1.0)
             for _ in range(n)
