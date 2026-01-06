@@ -1,49 +1,76 @@
-# YOLOv11-seg: SPD-Neck Only (Ablation Study)
-# Base: Standard YOLOv11n
-# Change: Replaced Neck Downsampling Conv layers with Focus (SPD)
-# Goal: Test impact of lossless downsampling on Recall.
+# YOLOv11-seg: ScConv-Head + Ghost-Backbone + SPD-Neck
+# Combination Strategy:
+# 1. Backbone Downsample: GhostConv (Efficiency)
+# 2. Backbone Blocks: Standard C3k2 (Feature Richness)
+# 3. Neck Downsample: Focus/SPD (Recall Preservation)
+# 4. Head Blocks: C3k2_ScConv (Feature Reconstruction/Cleaning)
 
 # Parameters
 nc: 1
 scales:
   n: [0.50, 0.25, 1024]
 
-# Backbone (STANDARD / BASELINE)
+# Backbone
 backbone:
+  # Stem
   - [-1, 1, Conv, [64, 3, 2]]              # 0-P1/2
-  - [-1, 1, Conv, [128, 3, 2]]             # 1-P2/4
+
+  # === GHOST Downsample ===
+  - [-1, 1, Conv, [128, 3, 2]]        # 1-P2/4
+  
+  # Standard C3k2 (Rich Features)
   - [-1, 2, C3k2, [256, False, 0.25]]      # 2
-  - [-1, 1, Conv, [256, 3, 2]]             # 3-P3/8
+
+  # === GHOST Downsample ===
+  - [-1, 1, Conv, [256, 3, 2]]        # 3-P3/8
+  
+  # Standard C3k2
   - [-1, 2, C3k2, [512, False, 0.25]]      # 4
-  - [-1, 1, Conv, [512, 3, 2]]             # 5-P4/16
+
+  # === GHOST Downsample ===
+  - [-1, 1, Focus, [512, 3, 2]]        # 5-P4/16
+  
+  # Standard C3k2
   - [-1, 2, C3k2, [512, True]]             # 6
-  - [-1, 1, Conv, [1024, 3, 2]]            # 7-P5/32
+
+  # === GHOST Downsample ===
+  - [-1, 1, Focus, [1024, 3, 2]]       # 7-P5/32
+  
+  # Standard C3k2
   - [-1, 2, C3k2, [1024, True]]            # 8
+  
   - [-1, 1, SPPF, [1024, 5]]               # 9
   - [-1, 2, C2PSA, [1024]]                 # 10
 
-# Head (Standard Blocks + SPD Downsampling)
+# Head (ScConv Blocks + SPD Downsampling)
 head:
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
   - [[-1, 6], 1, Concat, [1]]
-  - [-1, 2, C3k2, [512, False]] # 13
+  - [-1, 2, C3k2, [512, False]] # 13 (Standard Transition)
 
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
   - [[-1, 4], 1, Concat, [1]]
-  - [-1, 2, C3k2, [256, False]] # 16 (Standard P3 Head)
+  
+  # === HEAD P3: ScConv ===
+  - [-1, 2, C3k2_ScConv, [256, False]] # 16
 
-  # === MODIFICATION 1: SPD-Conv (Focus) ===
-  # Replaces Conv [256, 3, 2]
-  - [-1, 1, Focus, [256, 1]]    # 17 (Lossless P3->P4)
+  # === NECK DOWNSAMPLE 1: SPD-Conv (Focus) ===
+  # Lossless P3->P4
+  - [-1, 1, Focus, [256, 1]]           # 17
 
   - [[-1, 13], 1, Concat, [1]]
-  - [-1, 2, C3k2, [512, False]] # 19 (Standard P4 Head)
+  
+  # === HEAD P4: ScConv ===
+  - [-1, 2, C3k2_ScConv, [512, False]] # 19
 
-  # === MODIFICATION 2: SPD-Conv (Focus) ===
-  # Replaces Conv [512, 3, 2]
-  - [-1, 1, Focus, [512, 1]]    # 20 (Lossless P4->P5)
+  # === NECK DOWNSAMPLE 2: SPD-Conv (Focus) ===
+  # Lossless P4->P5
+  - [-1, 1, Focus, [512, 1]]           # 20
 
   - [[-1, 10], 1, Concat, [1]]
-  - [-1, 2, C3k2, [1024, True]] # 22 (Standard P5 Head)
+  
+  # === HEAD P5: ScConv ===
+  # Cut to 512 for efficiency
+  - [-1, 2, C3k2_ScConv, [1024, True]]  # 22
 
   - [[16, 19, 22], 1, Segment, [nc, 32, 256]] # 23
