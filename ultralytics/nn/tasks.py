@@ -70,7 +70,8 @@ from ultralytics.nn.modules import (
     C3k2_Ghost,
     C3k_Ghost,
     LSK,
-    C3k2_LSK_Triplet_Split,
+    C3k2_LSK_Triplet_Split, 
+    C3k2_ScConv,
     v10Detect,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, YAML, colorstr, emojis
@@ -1617,6 +1618,7 @@ def parse_model(d, ch, verbose=True):
             C3k2_Ghost,
             C3k_Ghost,
             C3k2_LSK_Triplet_Split,
+            C3k2_ScConv,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1638,6 +1640,7 @@ def parse_model(d, ch, verbose=True):
             C3k2_Ghost,
             A2C2f,
             C3k2_LSK_Triplet_Split,
+            C3k2_ScConv,
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
