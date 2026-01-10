@@ -2209,32 +2209,36 @@ def constant_init(module, val, bias=0):
         nn.init.constant_(module.bias, bias)
 
 class DySample(nn.Module):
-    # FIXED: Added 'c2' to the arguments list to catch the value passed by YOLO
-    def __init__(self, c1, c2, scale=2, style='lp', groups=4, dyscope=False):
+    def __init__(self, c1, c2=None, scale=2, style='lp', groups=4, dyscope=False):
         super().__init__()
         self.scale = scale
         self.style = style
         self.groups = groups
         
-        # We use c1 (input channels) for calculation
+        # If c2 is provided, we want output channels = c2
+        # Otherwise output channels = c1 (preserve channels)
+        if c2 is None:
+            c2 = c1
+        
         assert style in ['lp', 'pl']
         if style == 'pl':
             assert c1 >= scale ** 2 and c1 % scale ** 2 == 0
         assert c1 >= groups and c1 % groups == 0
-
+        
         if style == 'pl':
             in_channels = c1 // scale ** 2
             out_channels = 2 * groups
         else:
             in_channels = c1
             out_channels = 2 * groups * scale ** 2
-
+            
         self.offset = nn.Conv2d(in_channels, out_channels, 1)
         normal_init(self.offset, std=0.001)
+        
         if dyscope:
             self.scope = nn.Conv2d(in_channels, out_channels, 1, bias=False)
             constant_init(self.scope, val=0.)
-
+            
         self.register_buffer('init_pos', self._init_pos())
 
     def _init_pos(self):
