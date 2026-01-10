@@ -52,6 +52,7 @@ from .block import (
     LSK,                    # <--- Custom
     C3k2_LSK_Triplet_Split, # <--- Custom (The new one)
     C3k2_ScConv,
+    DySample,
     TorchVision,
 )
 from .conv import (
@@ -178,4 +179,5 @@ __all__ = (
     "LSK",                   # <--- Exported
     "C3k2_LSK_Triplet_Split",# <--- Exported
     "C3k2_ScConv",
+    "DySample,",
 )
