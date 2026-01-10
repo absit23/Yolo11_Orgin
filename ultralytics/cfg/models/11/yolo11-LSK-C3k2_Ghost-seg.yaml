@@ -1,53 +1,54 @@
-# YOLOv11-seg: Full-SPD Recall Specialist (FIXED)
-# Fix: Removed 'nn.' prefix from DySample calls.
+# YOLOv11-seg: SPD+DySample Recall Specialist (Fixed Dimensions)
+# Ensures all spatial dimensions align correctly
+# No extra Convs after Focus/DySample to save parameters
 
-# Parameters
 nc: 1
 scales:
   n: [0.50, 0.25, 1024]
 
-# Backbone (Full SPD Integration)
+# ========================================
+# BACKBONE: Conv early, Focus later
+# ========================================
 backbone:
-  - [-1, 1, Conv, [64, 3, 2]]              # 0-P1/2
-  - [-1, 1, Conv, [128, 3, 2]]               # 1-P2/4
-  - [-1, 2, C3k2, [256, False, 0.25]]      # 2
-  - [-1, 1, Conv, [256, 3, 2]]               # 3-P3/8
-  - [-1, 2, C3k2, [512, False, 0.25]]      # 4
-  - [-1, 1, Focus, [512, 3, 2]]               # 5-P4/16
-  - [-1, 2, C3k2, [512, True]]             # 6
-  - [-1, 1, Focus, [1024, 3, 2]]              # 7-P5/32
-  - [-1, 2, C3k2, [1024, True]]            # 8
-  - [-1, 1, SPPF, [1024, 5]]               # 9
-  - [-1, 2, C2PSA, [1024]]                 # 10
+  - [-1, 1, Conv, [64, 3, 2]]              # 0-P1/2: 640→320
+  - [-1, 1, Conv, [128, 3, 2]]             # 1-P2/4: 320→160
+  - [-1, 2, C3k2, [128, False, 0.25]]      # 2: 160×160×128
+  
+  - [-1, 1, Conv, [256, 3, 2]]             # 3-P3/8: 160→80
+  - [-1, 2, C3k2, [256, False, 0.25]]      # 4: 80×80×256
+  
+  - [-1, 1, Conv, [512, 3, 2]]             # 5-P4/16: 80→40
+  - [-1, 2, C3k2, [512, True]]             # 6: 40×40×512
+  
+  - [-1, 1, Conv, [1024, 3, 2]]            # 7-P5/32: 40→20
+  - [-1, 2, C3k2, [1024, True]]            # 8: 20×20×1024
+  
+  - [-1, 1, SPPF, [1024, 5]]               # 9: 20×20×1024
+  - [-1, 2, C2PSA, [1024]]                 # 10: 20×20×1024
 
-# Head (Split-LSK + SPD Neck + DySample Upsample)
+# ========================================
+# HEAD: DySample UP + Focus DOWN
+# ========================================
 head:
-  # === DySample 1 (P5 -> P4) ===
-  # FIXED: Removed 'nn.' prefix. Just 'DySample'.
-  - [-1, 1, DySample, [2]]              # 11
-  - [[-1, 6], 1, Concat, [1]]
+  # === P5 -> P4 (DySample UP) ===
+  - [-1, 1, DySample, [2]]                          # 11: 20×20 → 40×40 (1024ch)
+  - [[-1, 6], 1, Concat, [1]]                       # 12: (40×40×1024) + (40×40×512) = 1536ch
+  - [-1, 2, C3k2, [512, False]]                     # 13: 40×40×512
   
-  - [-1, 2, C3k2, [512, False]] # 13
-
-  # === DySample 2 (P4 -> P3) ===
-  # FIXED: Removed 'nn.' prefix.
-  - [-1, 1, DySample, [2]]              # 14
-  - [[-1, 4], 1, Concat, [1]]
+  # === P4 -> P3 (DySample UP) ===
+  - [-1, 1, DySample, [2]]                          # 14: 40×40 → 80×80 (512ch)
+  - [[-1, 4], 1, Concat, [1]]                       # 15: (80×80×512) + (80×80×256) = 768ch
+  - [-1, 2, C3k2, [256, False]]                     # 16: 80×80×256 (P3 output)
   
-  # === P3 Head (Split-LSK) ===
-  - [-1, 2, C3k2_LSK_Triplet_Split, [256, False]] # 16
-
-  # === NECK SPD ===
-  - [-1, 1, Focus, [256, 1]]           # 17 (Replaces Conv)
-  - [[-1, 13], 1, Concat, [1]]
+  # === P3 -> P4 (Focus DOWN) ===
+  - [-1, 1, Focus, [256, 1]]                        # 17: 80×80 → 40×40 (256→1024ch after Focus)
+  - [[-1, 13], 1, Concat, [1]]                      # 18: (40×40×1024) + (40×40×512) = 1536ch
+  - [-1, 2, C3k2, [512, False]]                     # 19: 40×40×512 (P4 output)
   
-  # === P4 Head (Split-LSK) ===
-  - [-1, 2, C3k2_LSK_Triplet_Split, [512, False]] # 19
-
-  # === NECK SPD ===
-  - [-1, 1, Focus, [512, 1]]           # 20 (Replaces Conv)
-  - [[-1, 10], 1, Concat, [1]]
+  # === P4 -> P5 (Focus DOWN) ===
+  - [-1, 1, Focus, [512, 1]]                        # 20: 40×40 → 20×20 (512→2048ch after Focus)
+  - [[-1, 10], 1, Concat, [1]]                      # 21: (20×20×2048) + (20×20×1024) = 3072ch
+  - [-1, 2, C3k2, [1024, True]]                     # 22: 20×20×1024 (P5 output)
   
-  # === P5 Head (Split-LSK) ===
-  - [-1, 2, C3k2_LSK_Triplet_Split, [1024, True]]  # 22
-  - [[16, 19, 22], 1, Segment, [nc, 32, 256]] # 23
+  # === Segment Head ===
+  - [[16, 19, 22], 1, Segment, [nc, 32, 256]]       # 23: Detect P3, P4, P5
