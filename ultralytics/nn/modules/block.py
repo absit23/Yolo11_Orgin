@@ -2210,43 +2210,24 @@ def constant_init(module, val, bias=0):
 
 class DySample(nn.Module):
     """
-    YOLO-Aware DySample: Handles (c1, c2) injected by Ultralytics.
+    Simplified DySample for YOLOv11.
+    Hardcoded for Scale=2, Style='LP' to prevent argument parsing errors.
     """
-    def __init__(self, c1, c2, scale=2, style='lp', groups=4, dyscope=False):
+    def __init__(self, c1, c2, *args, **kwargs):
         super().__init__()
+        # Ignore c2, args, kwargs. We trust c1 (input channels).
+        self.scale = 2
+        self.groups = 4
         
-        # --- SMART ARGUMENT HANDLING ---
-        # If scale is passed as a string or if c2 looks like a scale value
-        if isinstance(scale, str):
-            style = scale
-            scale = 2
+        # 'lp' style calculation:
+        # in_channels = c1
+        # out_channels = 2 * groups * scale^2 = 2 * 4 * 4 = 32
+        self.offset = nn.Conv2d(c1, 32, 1)
         
-        # If YOLO's c2 (output channels) is actually a scale factor from YAML
-        # and not a channel count (like 2, 4).
-        if c2 in [2, 3, 4] and scale == 2:
-            # This happens if the user puts DySample, [scale] in YAML
-            pass 
+        # Initialize weights to near-zero (identity mapping start)
+        nn.init.normal_(self.offset.weight, std=0.001)
+        nn.init.constant_(self.offset.bias, 0)
         
-        self.scale = scale
-        self.style = style
-        self.groups = groups
-        
-        # We always preserve channels in upsampling (c2 = c1)
-        # Offset generator uses input channels c1
-        if style == 'pl':
-            in_channels = c1 // (scale ** 2)
-            out_channels = 2 * groups
-        else:
-            in_channels = c1
-            out_channels = 2 * groups * (scale ** 2)
-
-        self.offset = nn.Conv2d(in_channels, out_channels, 1)
-        normal_init(self.offset, std=0.001)
-        
-        if dyscope:
-            self.scope = nn.Conv2d(in_channels, out_channels, 1, bias=False)
-            constant_init(self.scope, val=0.)
-
         self.register_buffer('init_pos', self._init_pos())
 
     def _init_pos(self):
@@ -2254,35 +2235,32 @@ class DySample(nn.Module):
         # indexing='ij' is crucial for matching meshgrid behavior across versions
         return torch.stack(torch.meshgrid([h, h], indexing='ij')).transpose(1, 2).repeat(1, self.groups, 1).reshape(1, -1, 1, 1)
 
+    def forward(self, x):
+        # x: [B, C, H, W]
+        # Calculate Offset
+        offset = self.offset(x) * 0.25 + self.init_pos
+        return self.sample(x, offset)
+
     def sample(self, x, offset):
         B, _, H, W = offset.shape
         offset = offset.view(B, 2, -1, H, W)
+        
+        # Grid Generation
         coords_h = torch.arange(H, device=x.device) + 0.5
         coords_w = torch.arange(W, device=x.device) + 0.5
         coords = torch.stack(torch.meshgrid([coords_w, coords_h], indexing='ij')
                              ).transpose(1, 2).unsqueeze(1).unsqueeze(0).type(x.dtype).to(x.device)
+        
         normalizer = torch.tensor([W, H], dtype=x.dtype, device=x.device).view(1, 2, 1, 1, 1)
         coords = 2 * (coords + offset) / normalizer - 1
+        
+        # Pixel Shuffle to Upsample the Grid
         coords = F.pixel_shuffle(coords.view(B, -1, H, W), self.scale).view(
             B, 2, -1, self.scale * H, self.scale * W).permute(0, 2, 3, 4, 1).contiguous().flatten(0, 1)
+        
+        # Sampling
         return F.grid_sample(x.reshape(B * self.groups, -1, H, W), coords, mode='bilinear',
                              align_corners=False, padding_mode="border").view(B, -1, self.scale * H, self.scale * W)
-
-    def forward(self, x):
-        if self.style == 'pl':
-            x_ = F.pixel_shuffle(x, self.scale)
-            if hasattr(self, 'scope'):
-                offset = F.pixel_unshuffle(self.offset(x_) * self.scope(x_).sigmoid(), self.scale) * 0.5 + self.init_pos
-            else:
-                offset = F.pixel_unshuffle(self.offset(x_), self.scale) * 0.25 + self.init_pos
-            return self.sample(x, offset)
-        
-        # Default 'lp' style
-        if hasattr(self, 'scope'):
-            offset = self.offset(x) * self.scope(x).sigmoid() * 0.5 + self.init_pos
-        else:
-            offset = self.offset(x) * 0.25 + self.init_pos
-        return self.sample(x, offset)
 #===============================DySample==========================================
 
 #=================================================================================
