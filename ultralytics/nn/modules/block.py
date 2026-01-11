@@ -2232,18 +2232,21 @@ class DySample(nn.Module):
         print(f"[DySample __init__] c1={c1}, c2={c2}, scale={scale}, style={style}")
     
     # Smart argument handling for YOLO
-        if isinstance(c2, int) and c2 in [2, 4, 8]:  # c2 is actually scale
+        if isinstance(c2, str):
+            if c2.startswith('scale'):
+                scale = int(c2.replace('scale', ''))  # 'scale2' -> 2
+                c2 = c1
+            else:  # c2 is style
+                style = c2
+                c2 = c1
+        elif isinstance(c2, int) and c2 in [2, 4, 8]:  # c2 is actually scale
             scale = c2
-            c2 = c1  # output channels = input channels
-        elif isinstance(c2, str):  # c2 is actually style  
-            style = c2
             c2 = c1
     
         print(f"[DySample __init__] After smart handling: scale={scale}, c2={c2}")
     
         self.scale = scale
-        self.style = style
-        self.groups = groups
+    # ... rest of your code
         # c1 is input channels from YOLO (auto-computed)
         # c2 is output channels from YOLO (we ignore it, preserve c1)
         # If user passes DySample, [2] then:
