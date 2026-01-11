@@ -2229,6 +2229,7 @@ class DySample(nn.Module):
     """
     def __init__(self, c1, c2, scale=2, style='lp', groups=4, dyscope=False):
         super().__init__()
+
         
         # c1 is input channels from YOLO (auto-computed)
         # c2 is output channels from YOLO (we ignore it, preserve c1)
@@ -2314,9 +2315,13 @@ class DySample(nn.Module):
         return self.sample(x, offset)
     
     def forward(self, x):
-        if self.style == 'pl':
-            return self.forward_pl(x)
-        return self.forward_lp(x)
+    print(f"[DySample] Input: {x.shape} → Expected output: torch.Size([{x.shape[0]}, {x.shape[1]}, {x.shape[2]*self.scale}, {x.shape[3]*self.scale}])")
+    if self.style == 'pl':
+        out = self.forward_pl(x)
+    else:
+        out = self.forward_lp(x)
+    print(f"[DySample] Actual output: {out.shape}")
+    return out
 
 
 # Test
