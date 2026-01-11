@@ -2315,15 +2315,14 @@ class DySample(nn.Module):
         return self.sample(x, offset)
     
     def forward(self, x):
-    print(f"[DySample] Input: {x.shape} → Expected output: torch.Size([{x.shape[0]}, {x.shape[1]}, {x.shape[2]*self.scale}, {x.shape[3]*self.scale}])")
-    if self.style == 'pl':
-        out = self.forward_pl(x)
-    else:
-        out = self.forward_lp(x)
-    print(f"[DySample] Actual output: {out.shape}")
-    return out
-
-
+        print(f"[DySample] Input: {x.shape} → Expected output: torch.Size([{x.shape[0]}, {x.shape[1]}, {x.shape[2]*self.scale}, {x.shape[3]*self.scale}])")
+        if self.style == 'pl':
+            out = self.forward_pl(x)
+        else:
+            out = self.forward_lp(x)
+        print(f"[DySample] Actual output: {out.shape}")
+        return out
+   
 # Test
 if __name__ == '__main__':
     print("Testing DySample with YOLO-style argument passing...\n")
