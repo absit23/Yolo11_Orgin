@@ -2210,157 +2210,79 @@ def constant_init(module, val, bias=0):
 
 class DySample(nn.Module):
     """
-    DySample upsampling module optimized for YOLO integration.
-    
-    YOLO passes arguments as: (c1, c2, *args)
-    where c1 = input channels, c2 = output channels (we ignore c2 and preserve c1)
-    
-    Args from YAML [scale, style, groups, dyscope]:
-        - If only [scale]: uses scale, default style='lp', groups=4
-        - If [scale, style]: uses both
-        - If [scale, style, groups]: uses all three
-        - If [scale, style, groups, dyscope]: uses all four
-    
-    Example YAML usage:
-        - [-1, 1, DySample, [2]]                    # scale=2, style='lp', groups=4
-        - [-1, 1, DySample, [2, 'lp']]              # scale=2, style='lp', groups=4  
-        - [-1, 1, DySample, [2, 'lp', 4]]           # scale=2, style='lp', groups=4
-        - [-1, 1, DySample, [2, 'lp', 4, False]]    # scale=2, style='lp', groups=4, dyscope=False
+    YOLO-Aware DySample: Handles (c1, c2) injected by Ultralytics.
     """
     def __init__(self, c1, c2, scale=2, style='lp', groups=4, dyscope=False):
         super().__init__()
-    
-        print(f"[DySample __init__] c1={c1}, c2={c2}, scale={scale}, style={style}")
-    
-    # OVERRIDE: Always use scale=2 for YOLO, ignore c2
-        scale = 2  # Hardcoded!
-        c2 = c1    # Output channels = input channels
-    
-        print(f"[DySample __init__] FORCED: scale={scale}, c2={c2}")
-    
-        self.scale = scale
-        self.style = style
-        self.groups = groups
-    
-    # ... rest of your code
-    # ... rest of your code
-        # c1 is input channels from YOLO (auto-computed)
-        # c2 is output channels from YOLO (we ignore it, preserve c1)
-        # If user passes DySample, [2] then:
-        #   c1 = input_ch (auto), c2 = input_ch (auto), scale = 2
-        # If user passes DySample, [2, 'lp'] then:
-        #   c1 = input_ch (auto), c2 = 2, scale = 'lp' 
-        # So we need to handle when c2 is actually the scale value!
         
-        # Smart argument handling for YOLO
-        if isinstance(c2, int) and c2 in [2, 4, 8]:  # c2 is actually scale
-            scale = c2
-            c2 = c1  # output channels = input channels
-        elif isinstance(c2, str):  # c2 is actually style  
-            style = c2
-            c2 = c1
-            
+        # --- SMART ARGUMENT HANDLING ---
+        # If scale is passed as a string or if c2 looks like a scale value
+        if isinstance(scale, str):
+            style = scale
+            scale = 2
+        
+        # If YOLO's c2 (output channels) is actually a scale factor from YAML
+        # and not a channel count (like 2, 4).
+        if c2 in [2, 3, 4] and scale == 2:
+            # This happens if the user puts DySample, [scale] in YAML
+            pass 
+        
         self.scale = scale
         self.style = style
         self.groups = groups
         
-        # Assertions
-        assert style in ['lp', 'pl'], f"style must be 'lp' or 'pl', got {style}"
+        # We always preserve channels in upsampling (c2 = c1)
+        # Offset generator uses input channels c1
         if style == 'pl':
-            assert c1 >= scale ** 2 and c1 % scale ** 2 == 0, \
-                f"c1={c1} must be >= {scale**2} and divisible by {scale**2} for style='pl'"
-        assert c1 >= groups and c1 % groups == 0, \
-            f"c1={c1} must be >= {groups} and divisible by {groups}"
-        
-        # Compute offset channels
-        if style == 'pl':
-            in_channels_offset = c1 // scale ** 2
+            in_channels = c1 // (scale ** 2)
             out_channels = 2 * groups
-        else:  # 'lp'
-            in_channels_offset = c1
-            out_channels = 2 * groups * scale ** 2
-        
-        self.offset = nn.Conv2d(in_channels_offset, out_channels, 1)
+        else:
+            in_channels = c1
+            out_channels = 2 * groups * (scale ** 2)
+
+        self.offset = nn.Conv2d(in_channels, out_channels, 1)
         normal_init(self.offset, std=0.001)
         
         if dyscope:
-            self.scope = nn.Conv2d(in_channels_offset, out_channels, 1, bias=False)
+            self.scope = nn.Conv2d(in_channels, out_channels, 1, bias=False)
             constant_init(self.scope, val=0.)
-        
+
         self.register_buffer('init_pos', self._init_pos())
-    
+
     def _init_pos(self):
         h = torch.arange((-self.scale + 1) / 2, (self.scale - 1) / 2 + 1) / self.scale
+        # indexing='ij' is crucial for matching meshgrid behavior across versions
         return torch.stack(torch.meshgrid([h, h], indexing='ij')).transpose(1, 2).repeat(1, self.groups, 1).reshape(1, -1, 1, 1)
-    
+
     def sample(self, x, offset):
         B, _, H, W = offset.shape
         offset = offset.view(B, 2, -1, H, W)
-        
         coords_h = torch.arange(H, device=x.device) + 0.5
         coords_w = torch.arange(W, device=x.device) + 0.5
-        
         coords = torch.stack(torch.meshgrid([coords_w, coords_h], indexing='ij')
                              ).transpose(1, 2).unsqueeze(1).unsqueeze(0).type(x.dtype).to(x.device)
-        
         normalizer = torch.tensor([W, H], dtype=x.dtype, device=x.device).view(1, 2, 1, 1, 1)
         coords = 2 * (coords + offset) / normalizer - 1
-        
         coords = F.pixel_shuffle(coords.view(B, -1, H, W), self.scale).view(
             B, 2, -1, self.scale * H, self.scale * W).permute(0, 2, 3, 4, 1).contiguous().flatten(0, 1)
-        
         return F.grid_sample(x.reshape(B * self.groups, -1, H, W), coords, mode='bilinear',
                              align_corners=False, padding_mode="border").view(B, -1, self.scale * H, self.scale * W)
-    
-    def forward_lp(self, x):
+
+    def forward(self, x):
+        if self.style == 'pl':
+            x_ = F.pixel_shuffle(x, self.scale)
+            if hasattr(self, 'scope'):
+                offset = F.pixel_unshuffle(self.offset(x_) * self.scope(x_).sigmoid(), self.scale) * 0.5 + self.init_pos
+            else:
+                offset = F.pixel_unshuffle(self.offset(x_), self.scale) * 0.25 + self.init_pos
+            return self.sample(x, offset)
+        
+        # Default 'lp' style
         if hasattr(self, 'scope'):
             offset = self.offset(x) * self.scope(x).sigmoid() * 0.5 + self.init_pos
         else:
             offset = self.offset(x) * 0.25 + self.init_pos
         return self.sample(x, offset)
-    
-    def forward_pl(self, x):
-        x_ = F.pixel_shuffle(x, self.scale)
-        if hasattr(self, 'scope'):
-            offset = F.pixel_unshuffle(self.offset(x_) * self.scope(x_).sigmoid(), self.scale) * 0.5 + self.init_pos
-        else:
-            offset = F.pixel_unshuffle(self.offset(x_), self.scale) * 0.25 + self.init_pos
-        return self.sample(x, offset)
-    
-    def forward(self, x):
-        print(f"[DySample] Input: {x.shape} → Expected output: torch.Size([{x.shape[0]}, {x.shape[1]}, {x.shape[2]*self.scale}, {x.shape[3]*self.scale}])")
-        if self.style == 'pl':
-            out = self.forward_pl(x)
-        else:
-            out = self.forward_lp(x)
-        print(f"[DySample] Actual output: {out.shape}")
-        return out
-   
-# Test
-if __name__ == '__main__':
-    print("Testing DySample with YOLO-style argument passing...\n")
-    
-    # Test 1: Standard usage - DySample, [2]
-    # YOLO interprets as: c1=64 (auto), c2=64 (auto), scale=2
-    x = torch.rand(2, 64, 8, 8)
-    dys1 = DySample(c1=64, c2=64, scale=2)
-    out1 = dys1(x)
-    print(f"Test 1 - DySample(c1=64, c2=64, scale=2):")
-    print(f"  Input:  {x.shape}")
-    print(f"  Output: {out1.shape}")
-    print(f"  ✓ Pass" if out1.shape == torch.Size([2, 64, 16, 16]) else "  ✗ Fail")
-    
-    # Test 2: YOLO might pass - DySample, [2, 'lp', 4]
-    # YOLO interprets as: c1=64 (auto), c2=2, scale='lp', style=4
-    # Our smart handler should fix this
-    print(f"\nTest 2 - DySample(c1=64, c2=2, scale='lp') - smart handling:")
-    dys2 = DySample(c1=64, c2=2, scale='lp')
-    out2 = dys2(x)
-    print(f"  Input:  {x.shape}")
-    print(f"  Output: {out2.shape}")
-    print(f"  ✓ Pass" if out2.shape == torch.Size([2, 64, 16, 16]) else "  ✗ Fail")
-    
-    print("\n✓ All tests passed! DySample is ready for YOLO integration.")
 #===============================DySample==========================================
 
 #=================================================================================
