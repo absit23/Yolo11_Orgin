@@ -2209,43 +2209,36 @@ def constant_init(module, val, bias=0):
         nn.init.constant_(module.bias, bias)
 
 class DySample(nn.Module):
-    """
-    Simplified DySample for YOLOv11.
-    Hardcoded for Scale=2, Style='LP' to prevent argument parsing errors.
-    """
-    def __init__(self, c1, c2, *args, **kwargs):
+    def __init__(self, c1, c2=None, scale=2, style='lp', groups=4, dyscope=False):
         super().__init__()
-        # Ignore c2, args, kwargs. We trust c1 (input channels).
+        
+        # --- YOLO COMPATIBILITY BLOCK ---
+        # YOLO passes (c1, c2, *args). We force scale=2 for upsampling layers.
         self.scale = 2
+        self.style = 'lp'
         self.groups = 4
+        # -------------------------------
+
+        # Input: c1. Output Offset: 2 * groups * scale^2
+        out_channels = 2 * self.groups * self.scale ** 2
+        self.offset = nn.Conv2d(c1, out_channels, 1)
         
-        # 'lp' style calculation:
-        # in_channels = c1
-        # out_channels = 2 * groups * scale^2 = 2 * 4 * 4 = 32
-        self.offset = nn.Conv2d(c1, 32, 1)
+        normal_init(self.offset, std=0.001)
         
-        # Initialize weights to near-zero (identity mapping start)
-        nn.init.normal_(self.offset.weight, std=0.001)
-        nn.init.constant_(self.offset.bias, 0)
-        
+        if dyscope:
+            self.scope = nn.Conv2d(c1, out_channels, 1, bias=False)
+            constant_init(self.scope, val=0.)
+
         self.register_buffer('init_pos', self._init_pos())
 
     def _init_pos(self):
         h = torch.arange((-self.scale + 1) / 2, (self.scale - 1) / 2 + 1) / self.scale
-        # indexing='ij' is crucial for matching meshgrid behavior across versions
         return torch.stack(torch.meshgrid([h, h], indexing='ij')).transpose(1, 2).repeat(1, self.groups, 1).reshape(1, -1, 1, 1)
-
-    def forward(self, x):
-        # x: [B, C, H, W]
-        # Calculate Offset
-        offset = self.offset(x) * 0.25 + self.init_pos
-        return self.sample(x, offset)
 
     def sample(self, x, offset):
         B, _, H, W = offset.shape
         offset = offset.view(B, 2, -1, H, W)
         
-        # Grid Generation
         coords_h = torch.arange(H, device=x.device) + 0.5
         coords_w = torch.arange(W, device=x.device) + 0.5
         coords = torch.stack(torch.meshgrid([coords_w, coords_h], indexing='ij')
@@ -2254,13 +2247,18 @@ class DySample(nn.Module):
         normalizer = torch.tensor([W, H], dtype=x.dtype, device=x.device).view(1, 2, 1, 1, 1)
         coords = 2 * (coords + offset) / normalizer - 1
         
-        # Pixel Shuffle to Upsample the Grid
-        coords = F.pixel_shuffle(coords.view(B, -1, H, W), self.scale).view(
+        # === THE BUG FIX IS HERE ===
+        # Changed .view() to .reshape() to handle non-contiguous tensors
+        # This prevents the RuntimeError: Sizes of tensors must match...
+        coords = F.pixel_shuffle(coords.reshape(B, -1, H, W), self.scale).view(
             B, 2, -1, self.scale * H, self.scale * W).permute(0, 2, 3, 4, 1).contiguous().flatten(0, 1)
         
-        # Sampling
         return F.grid_sample(x.reshape(B * self.groups, -1, H, W), coords, mode='bilinear',
                              align_corners=False, padding_mode="border").view(B, -1, self.scale * H, self.scale * W)
+
+    def forward(self, x):
+        offset = self.offset(x) * 0.25 + self.init_pos
+        return self.sample(x, offset)
 #===============================DySample==========================================
 
 #=================================================================================
