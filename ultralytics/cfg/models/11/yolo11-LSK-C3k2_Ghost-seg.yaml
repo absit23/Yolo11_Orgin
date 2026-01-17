@@ -28,9 +28,6 @@ head:
   - [[-1, 6], 1, Concat, [1]]
   - [-1, 2, C3k2, [512, False]]         # 13
 
-  # === DySample P4->P3 ===
-  # Arg [512] * 0.25 = 128.
-  # Matches P4 channels. Parser is happy.
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]            # 14
 
   - [[-1, 4], 1, Concat, [1]]
