@@ -6,7 +6,7 @@
 # 3. Upsample: Standard 'nn.Upsample' (Stable).
 
 # Parameters
-nc: 4 # Number of classes (Crack)
+nc: 5 # Number of classes (Crack)
 scales:
   n: [0.50, 0.25, 1024]
 
