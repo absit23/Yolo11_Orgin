@@ -50,7 +50,7 @@ from .block import (
     C3k2_Ghost,             # <--- Custom
     C3k_Ghost,              # <--- Custom
     LSK,                    # <--- Custom
-    C3k2_LSK_Triplet_Split, # <--- Custom (The new one)
+    SCBR, # <--- Custom (The new one)
     C3k2_ScConv,
     DySample,
     TorchVision,
@@ -177,7 +177,7 @@ __all__ = (
     "C3k2_Ghost",            # <--- Exported
     "C3k_Ghost",             # <--- Exported
     "LSK",                   # <--- Exported
-    "C3k2_LSK_Triplet_Split",# <--- Exported
+    "SCBR",# <--- Exported
     "C3k2_ScConv",
     "DySample,",
 )
