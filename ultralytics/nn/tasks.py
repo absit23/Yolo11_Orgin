@@ -70,7 +70,7 @@ from ultralytics.nn.modules import (
     C3k2_Ghost,
     C3k_Ghost,
     LSK,
-    C3k2_LSK_Triplet_Split, 
+    SCBR, 
     C3k2_ScConv,
     DySample,
     v10Detect,
@@ -1618,7 +1618,7 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
             C3k2_Ghost,
             C3k_Ghost,
-            C3k2_LSK_Triplet_Split,
+            SCBR,
             C3k2_ScConv,
             DySample,
         }
@@ -1641,7 +1641,7 @@ def parse_model(d, ch, verbose=True):
             C2PSA,
             C3k2_Ghost,
             A2C2f,
-            C3k2_LSK_Triplet_Split,
+            SCBR,
             C3k2_ScConv,
             DySample,
         }
