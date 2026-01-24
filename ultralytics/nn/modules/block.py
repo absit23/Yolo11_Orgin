@@ -57,7 +57,7 @@ __all__ = (
     "TripletAttention",
     "StripLSK",
     "Bottleneck_Split",
-    "C3k2_LSK_Triplet_Split",
+    "SCBR",
     "GroupNorm2d",
     "SRU",
     "CRU",
@@ -2179,8 +2179,9 @@ class Bottleneck_Split(nn.Module):
 
 # ---------------------------------------------------------
 # 4. The Wrapper Class (Drop-in replacement for C3k2)
+#SCBR Block Full Title: Structure-Context Bottleneck Refinemnt block
 # ---------------------------------------------------------
-class C3k2_LSK_Triplet_Split(C2f):
+class SCBR(C2f):
     """
     CSP Bottleneck with Split Attention.
     Replaces standard Bottlenecks with Bottleneck_Split.
