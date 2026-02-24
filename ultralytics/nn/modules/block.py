@@ -65,6 +65,9 @@ __all__ = (
     "BottleneckScConv",
     "C3k2_ScConv",
     "DySample",
+    "C3k2_PConv",
+    "FasterBottleneck",
+    "PConv",
     "TorchVision",
 )
 
@@ -2414,6 +2417,60 @@ class C3k2_ScConv(C2f):
         super().__init__(c1, c2, n, shortcut, g, e)
         self.m = nn.ModuleList(
             BottleneckScConv(self.c, self.c, shortcut, g, k=(3, 3), e=1.0)
+            for _ in range(n)
+        )
+
+#New >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+class PConv(nn.Module):
+    """
+    Partial Convolution - FasterNet style
+    Only convolves first n_div fraction of channels
+    """
+    def __init__(self, in_channels, n_div=2, kernel_size=3):
+        super().__init__()
+        self.dim_conv = in_channels // n_div        # channels to convolve
+        self.dim_untouched = in_channels - self.dim_conv  # channels to skip
+        
+        self.conv = nn.Conv2d(
+            self.dim_conv,
+            self.dim_conv,
+            kernel_size,
+            padding=kernel_size // 2,
+            bias=False
+        )
+
+    def forward(self, x):
+        x1, x2 = torch.split(
+            x, [self.dim_conv, self.dim_untouched], dim=1
+        )
+        return torch.cat([self.conv(x1), x2], dim=1)
+
+
+class FasterBottleneck(nn.Module):
+    """
+    Bottleneck using PConv instead of standard/Ghost conv
+    """
+    def __init__(self, c1, c2, shortcut=True, g=1, k=(3,3), e=0.5):
+        super().__init__()
+        c_ = int(c2 * e)
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        self.pconv = PConv(c_, n_div=2, kernel_size=k[1])
+        self.cv2 = Conv(c_, c2, 1, 1)  # pointwise projection
+        self.add = shortcut and c1 == c2
+
+    def forward(self, x):
+        y = self.cv2(self.pconv(self.cv1(x)))
+        return x + y if self.add else y
+
+
+class C3k2_PConv(C2f):
+    """
+    Drop-in replacement for C3k2 using PConv bottlenecks
+    """
+    def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        self.m = nn.ModuleList(
+            FasterBottleneck(self.c, self.c, shortcut, g, k=(3,3), e=1.0)
             for _ in range(n)
         )
         
