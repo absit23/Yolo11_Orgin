@@ -51,6 +51,9 @@ from .block import (
     C3k_Ghost,              # <--- Custom
     LSK,                    # <--- Custom
     SCBR, # <--- Custom (The new one)
+    C3k2_PConv,
+    FasterBottleneck,
+    PConv,
     C3k2_ScConv,
     DySample,
     TorchVision,
@@ -178,6 +181,9 @@ __all__ = (
     "C3k_Ghost",             # <--- Exported
     "LSK",                   # <--- Exported
     "SCBR",# <--- Exported
+    "C3k2_PConv",
+    "FasterBottleneck",
+    "PConv",
     "C3k2_ScConv",
     "DySample,",
 )
