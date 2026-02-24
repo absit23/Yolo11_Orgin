@@ -72,6 +72,9 @@ from ultralytics.nn.modules import (
     LSK,
     SCBR, 
     C3k2_ScConv,
+    C3k2_PConv,
+    FasterBottleneck,
+    PConv,
     DySample,
     v10Detect,
 )
@@ -1620,6 +1623,9 @@ def parse_model(d, ch, verbose=True):
             C3k_Ghost,
             SCBR,
             C3k2_ScConv,
+            C3k2_PConv,
+            FasterBottleneck,
+            PConv,
             DySample,
         }
     )
@@ -1643,6 +1649,9 @@ def parse_model(d, ch, verbose=True):
             A2C2f,
             SCBR,
             C3k2_ScConv,
+            C3k2_PConv,
+            FasterBottleneck,
+            PConv,
             DySample,
         }
     )
