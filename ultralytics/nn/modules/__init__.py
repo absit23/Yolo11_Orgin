@@ -56,6 +56,9 @@ from .block import (
     PConv,
     C3k2_ScConv,
     DySample,
+    CrackADown,
+    CrackBottleneck,
+    C3k2_Crack,
     TorchVision,
 )
 from .conv import (
@@ -186,4 +189,7 @@ __all__ = (
     "PConv",
     "C3k2_ScConv",
     "DySample,",
+    "CrackADown",
+    "CrackBottleneck",
+    "C3k2_Crack",
 )
