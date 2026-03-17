@@ -66,8 +66,11 @@ __all__ = (
     "C3k2_ScConv",
     "DySample",
     "C3k2_PConv",
+    "CrackADown",
     "FasterBottleneck",
     "PConv",
+    "CrackBottleneck",
+    "C3k2_Crack",
     "TorchVision",
 )
 
@@ -2107,24 +2110,25 @@ class TripletAttention(nn.Module):
         max_out, _ = torch.max(x, dim=1, keepdim=True)
         return self.sigmoid(self.spatial_conv(torch.cat([mean_out, max_out], dim=1)))
 
+
 # ---------------------------------------------------------
-# 2. Strip-LSK (Large Selective Kernel - Decomposed)
+# 2. Strip-LSK (Optimized for Linear Structures)
 # ---------------------------------------------------------
 class StripLSK(nn.Module):
     """
     Optimized LSK for Cracks.
-    Decomposes large kernels into Strips (1xK, Kx1) to match crack morphology.
-    Massively cheaper than standard square kernels.
+    Decomposes large kernels into Strips (1xK, Kx1).
+    k=7 is the 'Golden Number' for thin crack detection.
     """
-    def __init__(self, dim, k=11):
+    def __init__(self, dim, k=7): # FIXED: Default to 7
         super().__init__()
         # Depthwise Horizontal Strip
         self.conv_h = nn.Conv2d(dim, dim, (1, k), padding=(0, k//2), groups=dim, bias=False)
         # Depthwise Vertical Strip
         self.conv_v = nn.Conv2d(dim, dim, (k, 1), padding=(k//2, 0), groups=dim, bias=False)
-        # Spatial Aggregation
+        # Spatial Aggregation (Mixing) - Keep at 5
         self.conv_s = nn.Conv2d(dim, dim, 5, padding=2, groups=dim, bias=False)
-        # Channel Mixing (The only heavy part, but run on reduced channels)
+        # Channel Mixing (1x1)
         self.conv_1x1 = nn.Conv2d(dim, dim, 1, bias=False)
         self.sigmoid = nn.Sigmoid()
 
@@ -2135,14 +2139,15 @@ class StripLSK(nn.Module):
         attn = self.conv_1x1(attn)
         return x * self.sigmoid(attn)
 
+
 # ---------------------------------------------------------
-# 3. The "Split" Bottleneck (The Magic Fix)
+# 3. SCBR Bottleneck (The Split Logic)
 # ---------------------------------------------------------
 class Bottleneck_Split(nn.Module):
     """
     Splits the bottleneck channels:
-    - 50% go to StripLSK (Context/Connectivity)
-    - 50% go to Triplet (Sharpness/Edges)
+    - 75% go to StripLSK (Context/Structure for thin/thick cracks)
+    - 25% go to Triplet (Detail/Refinement)
     """
     def __init__(self, c1, c2, shortcut=True, g=1, k=(3, 3), e=0.5):
         super().__init__()
@@ -2151,23 +2156,20 @@ class Bottleneck_Split(nn.Module):
         self.cv2 = Conv(c_, c2, k[1], 1, g=g)
         self.add = shortcut and c1 == c2
         
-        # Split point: Half of hidden channels
-        self.split_c = c_ // 2
-        # Ensure even split
-        if self.split_c * 2 != c_:
-             self.split_c = c_ - self.split_c 
+        # 🔥 THE FIX: 75% Split for LSK to prioritize crack continuity
+        self.split_c = int(c_ * 0.75) 
 
-        # Branch 1: LSK for Context
-        self.branch_lsk = StripLSK(self.split_c, k=11)
+        # Branch 1: LSK for Structure 
+        self.branch_lsk = StripLSK(self.split_c, k=7)
         
-        # Branch 2: Triplet for Edges
+        # Branch 2: Triplet for Refinement
         self.branch_triplet = TripletAttention()
 
     def forward(self, x):
-        # 1. Initial expansion (Standard Bottleneck start)
+        # 1. Initial expansion
         y = self.cv1(x)
         
-        # 2. Split Logic
+        # 2. Split Logic (Dynamically calculates remaining channels for Triplet)
         y_lsk, y_triplet = torch.split(y, [self.split_c, y.shape[1] - self.split_c], dim=1)
         
         # 3. Parallel Processing
@@ -2180,24 +2182,21 @@ class Bottleneck_Split(nn.Module):
         
         return x + y_out if self.add else y_out
 
+
 # ---------------------------------------------------------
-# 4. The Wrapper Class (Drop-in replacement for C3k2)
-#SCBR Block Full Title: Structure-Context Bottleneck Refinemnt block
+# 4. SCBR Module (The Wrapper)
 # ---------------------------------------------------------
 class SCBR(C2f):
     """
-    CSP Bottleneck with Split Attention.
-    Replaces standard Bottlenecks with Bottleneck_Split.
+    Structure-Context Bottleneck Refinement (SCBR)
+    Replaces standard C2f/C3k2 with Split-Attention bottlenecks.
     """
     def __init__(self, c1, c2, n=1, c3k=False, e=0.5, g=1, shortcut=True):
         super().__init__(c1, c2, n, shortcut, g, e)
-        # Overwrite self.m with our optimized bottlenecks
-        # c1 is input, c2 is output, self.c is hidden dimension
         self.m = nn.ModuleList(
             Bottleneck_Split(self.c, self.c, shortcut, g, k=(3, 3), e=1.0)
             for _ in range(n)
         )
-
 #===============================DySample==========================================
 
 def normal_init(module, mean=0, std=1, bias=0):
@@ -2419,8 +2418,9 @@ class C3k2_ScConv(C2f):
             BottleneckScConv(self.c, self.c, shortcut, g, k=(3, 3), e=1.0)
             for _ in range(n)
         )
+        
 
-#New >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+        #New >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 class PConv(nn.Module):
     """
     Partial Convolution - FasterNet style
@@ -2473,7 +2473,107 @@ class C3k2_PConv(C2f):
             FasterBottleneck(self.c, self.c, shortcut, g, k=(3,3), e=1.0)
             for _ in range(n)
         )
+
+#Proposed>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+class CrackADown(nn.Module):
+    def __init__(self, c1, c2, **kwargs):
+        super().__init__()
+        assert c1 % 2 == 0, f"c1 ({c1}) must be even"
+        assert c2 % 2 == 0, f"c2 ({c2}) must be even"
+
+        c_ = c2 // 2
+        c_strip = c2 - c_
+        c_strip_h = c_strip // 2
+        c_strip_v = c_strip - c_strip_h
+
+        # Branch 1: standard ADown 3x3 strided conv
+        self.cv1 = Conv(c1 // 2, c_, 3, 2, 1)
+
+        # Branch 2: directional strip pooling
+        self.pool_h = nn.AvgPool2d((1, 3), stride=1, padding=(0, 1))
+        self.pool_v = nn.AvgPool2d((3, 1), stride=1, padding=(1, 0))
+        self.cv2 = Conv(c1 // 2, c_strip_h, 1, 1)
+        self.cv3 = Conv(c1 // 2, c_strip_v, 1, 1)
         
+        # 🔥 FIX: use strided Conv instead of AvgPool2d for downsampling
+        # This ensures SAME spatial output as branch 1 regardless of input size
+        self.cv2_down = Conv(c_strip_h, c_strip_h, 3, 2, 1)  # stride=2 with padding
+        self.cv3_down = Conv(c_strip_v, c_strip_v, 3, 2, 1)  # stride=2 with padding
+
+    def forward(self, x):
+        # Initial spatial smoothing (same as ADown)
+        x = torch.nn.functional.avg_pool2d(x, 2, 1, 0, False, True)
+        
+        # Split channels
+        x1, x2 = x.chunk(2, 1)
+
+        # Branch 1: 3x3 strided conv
+        out1 = self.cv1(x1)
+
+        # Branch 2: directional strip pooling + strided conv
+        h = self.pool_h(x2)
+        out_h = self.cv2_down(self.cv2(h))  # 🔥 strided conv downsampling
+
+        v = self.pool_v(x2)
+        out_v = self.cv3_down(self.cv3(v))  # 🔥 strided conv downsampling
+
+        out2 = torch.cat([out_h, out_v], dim=1)
+
+        return torch.cat((out1, out2), dim=1)
+
+#C3k2_Crack >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+class C3k2_Crack(C2f):
+    """
+    C3k2 enhanced for crack feature recovery.
+    Used after CrackADown to compensate for
+    directional downsampling information loss.
+    
+    Adds a lightweight channel attention inside
+    the bottleneck to re-weight crack-relevant channels
+    that may be suppressed after downsampling.
+    """
+    def __init__(self, c1, c2, n=1, c3k=False, 
+                 e=0.5, g=1, shortcut=True):
+        super().__init__(c1, c2, n, shortcut, g, e)
+        self.m = nn.ModuleList(
+            CrackBottleneck(self.c, self.c, shortcut, g, 
+                          k=(3,3), e=1.0)
+            for _ in range(n)
+        )
+
+class CrackBottleneck(nn.Module):
+    """
+    Bottleneck with lightweight channel attention
+    for crack feature recovery after downsampling.
+    """
+    def __init__(self, c1, c2, shortcut=True, 
+                 g=1, k=(3,3), e=0.5):
+        super().__init__()
+        c_ = int(c2 * e)
+        self.cv1 = Conv(c1, c_, k[0], 1)
+        self.cv2 = Conv(c_, c2, k[1], 1, g=g)
+        self.add = shortcut and c1 == c2
+        
+        # Lightweight channel attention
+        # Reweights channels after CrackADown
+        # Very cheap: just global pool + 2 FC
+        self.ca = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Flatten(),
+            nn.Linear(c2, c2 // 4),
+            nn.SiLU(),
+            nn.Linear(c2 // 4, c2),
+            nn.Sigmoid()
+        )
+    
+    def forward(self, x):
+        y = self.cv2(self.cv1(x))
+        # Apply channel attention
+        w = self.ca(y).view(y.shape[0], -1, 1, 1)
+        y = y * w
+        return x + y if self.add else y
+
+
 class SAVPE(nn.Module):
     """Spatial-Aware Visual Prompt Embedding module for feature enhancement."""
 
