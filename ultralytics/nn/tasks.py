@@ -76,6 +76,9 @@ from ultralytics.nn.modules import (
     FasterBottleneck,
     PConv,
     DySample,
+    CrackADown,
+    CrackBottleneck,
+    C3k2_Crack,
     v10Detect,
 )
 from ultralytics.utils import DEFAULT_CFG_DICT, LOGGER, YAML, colorstr, emojis
@@ -1627,6 +1630,9 @@ def parse_model(d, ch, verbose=True):
             FasterBottleneck,
             PConv,
             DySample,
+            CrackADown,
+            CrackBottleneck,
+            C3k2_Crack,
         }
     )
     repeat_modules = frozenset(  # modules with 'repeat' arguments
@@ -1650,9 +1656,10 @@ def parse_model(d, ch, verbose=True):
             SCBR,
             C3k2_ScConv,
             C3k2_PConv,
+            CrackBottleneck,
+            C3k2_Crack,
             FasterBottleneck,
             PConv,
-            DySample,
         }
     )
     for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
